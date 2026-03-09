@@ -18,7 +18,8 @@ CREATE TABLE meetflow_reuniones (
     "followupTime" text,
     "createdAt" timestamp with time zone,
     "completedAt" timestamp with time zone,
-    "created_at" timestamp with time zone DEFAULT now()
+    "created_at" timestamp with time zone DEFAULT now(),
+    "aiSummary" text
 );
 
 -- Enable Row Level Security (RLS) if you plan on adding authentication later

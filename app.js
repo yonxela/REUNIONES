@@ -256,7 +256,7 @@ class MeetingManager {
   }
 
   // ===== MEETING CRUD =====
-  createNewMeeting() {
+  async createNewMeeting() {
     const now = new Date();
     const meeting = {
       id: Date.now().toString(),
@@ -274,9 +274,9 @@ class MeetingManager {
     };
 
     this.meetings.unshift(meeting);
-    this.saveMeetings();
+    this.selectMeeting(meeting.id); // Set currentMeetingId so Supabase knows what to upsert
+    await this.saveMeetings();
     this.renderMeetingList();
-    this.selectMeeting(meeting.id);
     this.showToast('Nueva reunión creada', 'success');
   }
 

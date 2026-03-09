@@ -1823,7 +1823,7 @@ body::before {
   height: 100%;
   z-index: 0;
   overflow: hidden;
-  background: radial-gradient(circle at center, #1b163d 0%, #0b0e17 100%);
+  background: var(--bg-main);
 }
 
 .login-shape {

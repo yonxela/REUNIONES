@@ -1870,7 +1870,9 @@ body::before {
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 900px) {
-  .app-container {
+
+  .app-container,
+  .app-container.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 

@@ -60,7 +60,7 @@ class AIAssistant {
                 // Apagar el micrófono para que no se quede prendido el foquito
                 this.mediaRecorder.stream.getTracks().forEach(t => t.stop());
 
-                if (updateUIStatus) updateUIStatus("Procesando audio (Whisper)...");
+                if (updateUIStatus) updateUIStatus("Procesando audio by SISDEL Meets...");
 
                 try {
                     // PASO 1: TRANSCRIPCIÓN (WHISPER)
@@ -89,7 +89,7 @@ class AIAssistant {
                         return;
                     }
 
-                    if (updateUIStatus) updateUIStatus("Generando resumen (GPT-4o-mini)...");
+                    if (updateUIStatus) updateUIStatus("Generando resumen by SISDEL Meets...");
 
                     // PASO 2: RESUMEN INTELIGENTE (GPT)
                     const prompt = `Actúa como un asistente ejecutivo brillante. Lee la siguiente transcripción de una reunión y extrae:\n\n1. "Resumen Ejecutivo": 3 a 5 viñetas con los temas principales.\n2. "Acuerdos/Tareas": Qué se debe hacer y quiénes si se mencionaron.\n\nTranscripción de la junta:\n"${transcripcion}"\n\nResponde en español, usando formato Markdown básico, de forma muy ejecutiva, clara y directa.`;

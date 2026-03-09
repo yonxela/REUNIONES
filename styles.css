@@ -160,6 +160,11 @@ body::before {
 .sidebar-header .logo h1 {
   font-size: 1.15rem;
   font-weight: 700;
+  color: var(--text-primary);
+}
+
+.sidebar-header .logo h1 span {
+  font-weight: 300;
   background: var(--accent-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

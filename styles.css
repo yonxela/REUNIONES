@@ -1876,21 +1876,20 @@ body::before {
 
   .sidebar {
     position: fixed;
-    left: -280px;
+    top: 0;
+    left: 0;
     width: 280px;
     height: 100vh;
     z-index: 300;
-    transition: left var(--transition-base);
+    box-shadow: var(--shadow-lg);
+    background: var(--bg-primary);
+    /* Ensure solid background overlay */
   }
 
-  .sidebar.open {
-    left: 0;
-  }
-
-  .sidebar-collapsed .sidebar {
-    transform: none;
-    opacity: 1;
-    pointer-events: auto;
+  .app-container.sidebar-collapsed .sidebar {
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
   }
 
   .main-area {

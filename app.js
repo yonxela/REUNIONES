@@ -9,12 +9,15 @@ class MeetingManager {
     this.topicTimerInterval = null;
     this.topicTimerSeconds = 0;
     this.currentTopicIndex = -1;
-    this.sidebarVisible = true;
+    this.sidebarVisible = window.innerWidth > 900;
   }
 
   async init() {
     this.cacheDOM();
     this.bindEvents();
+
+    // Ensure correct initial sidebar state
+    this.appContainer.classList.toggle('sidebar-collapsed', !this.sidebarVisible);
 
     // Attempt local storage first to prevent white screens while fetching
     const localData = localStorage.getItem('meetflow_meetings');

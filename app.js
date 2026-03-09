@@ -73,6 +73,8 @@ class MeetingManager {
     this.timerDisplay = document.getElementById('timerDisplay');
     this.btnPlayTimer = document.getElementById('btnPlayTimer');
     this.btnPauseTimer = document.getElementById('btnPauseTimer');
+    this.btnAIAssist = document.getElementById('btnAIAssist');
+    this.aiAssistText = document.getElementById('aiAssistText');
     this.currentTopicDisplay = document.getElementById('currentTopicDisplay');
     this.currentTopicName = document.getElementById('currentTopicName');
     this.topicTimerDisplay = document.getElementById('topicTimerDisplay');
@@ -95,6 +97,8 @@ class MeetingManager {
 
     // Summary
     this.summaryContent = document.getElementById('summaryContent');
+    this.aiSummaryBox = document.getElementById('aiSummaryBox');
+    this.aiSummaryText = document.getElementById('aiSummaryText');
     this.followupDate = document.getElementById('followupDate');
     this.followupTime = document.getElementById('followupTime');
     this.btnCopySummary = document.getElementById('btnCopySummary');
@@ -126,6 +130,7 @@ class MeetingManager {
     // Meeting
     this.btnPlayTimer.addEventListener('click', () => this.startTimer());
     this.btnPauseTimer.addEventListener('click', () => this.pauseTimer());
+    this.btnAIAssist.addEventListener('click', () => this.toggleAIAssistant());
     this.btnTopicDone.addEventListener('click', () => this.markCurrentTopicDone());
     this.btnFinishMeeting.addEventListener('click', () => this.finishMeeting());
 
@@ -406,17 +411,57 @@ class MeetingManager {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
 
-    this.openModal('Finalizar Reunión', '¿Deseas finalizar esta reunión? Se generará un resumen automático.', () => {
+    this.openModal('Finalizar Reunión', '¿Deseas finalizar esta reunión? Se generará tu historial y el resumen IA.', async () => {
+      this.closeModal(); // Close modal immediately to show toast
       this.stopAllTimers();
       meeting.status = 'completed';
       meeting.totalTime = this.timerSeconds;
       meeting.completedAt = new Date().toISOString();
+
+      if (window.meetflowAI && window.meetflowAI.isRecording) {
+        this.btnAIAssist.classList.remove('recording');
+        this.aiAssistText.textContent = "Procesando...";
+        this.showToast('Procesando resumen IA, espera un momento...', 'info');
+
+        const aiResult = await window.meetflowAI.stopAndSummarize((statusText) => {
+          this.aiAssistText.textContent = statusText;
+        });
+
+        if (aiResult && aiResult.summary) {
+          meeting.aiSummary = aiResult.summary;
+        } else if (aiResult && aiResult.error) {
+          this.showToast('Error IA: ' + aiResult.error, 'error');
+        }
+        this.aiAssistText.textContent = "Asistente IA";
+      }
+
       this.saveMeetings();
-      this.closeModal();
       this.renderMeetingList();
       this.goToSummaryStep(true);
       this.showToast('¡Reunión finalizada con éxito!', 'success');
     });
+  }
+
+  async toggleAIAssistant() {
+    if (!window.meetflowAI) return;
+
+    if (window.meetflowAI.isRecording) {
+      this.showToast('El asistente ya está escuchando. Se procesará al finalizar la reunión.', 'info');
+      return;
+    }
+
+    this.btnAIAssist.disabled = true;
+    this.aiAssistText.textContent = "Conectando...";
+    const success = await window.meetflowAI.startListening();
+    this.btnAIAssist.disabled = false;
+
+    if (success) {
+      this.btnAIAssist.classList.add('recording');
+      this.aiAssistText.textContent = "IA Escuchando...";
+      this.showToast('Asistente IA activado', 'success');
+    } else {
+      this.aiAssistText.textContent = "Asistente IA";
+    }
   }
 
   goToSummaryStep(isNew) {
@@ -928,6 +973,15 @@ class MeetingManager {
     }
 
     this.summaryContent.innerHTML = html;
+
+    // AI Summary
+    if (meeting.aiSummary) {
+      this.aiSummaryBox.classList.remove('hidden');
+      this.aiSummaryText.innerHTML = this.esc(meeting.aiSummary).replace(/\n/g, '<br>');
+    } else {
+      this.aiSummaryBox.classList.add('hidden');
+      this.aiSummaryText.innerHTML = '';
+    }
   }
 
   copySummary() {

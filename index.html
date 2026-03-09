@@ -213,6 +213,15 @@
                 </svg>
                 Pausar
               </button>
+              <button class="btn-ai-assist" id="btnAIAssist" title="Activar Asistente IA">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+                <span id="aiAssistText">Asistente IA</span>
+              </button>
             </div>
 
             <div class="current-topic-display" id="currentTopicDisplay">
@@ -331,6 +340,20 @@
 
         <div class="section">
           <div class="summary-content" id="summaryContent"></div>
+
+          <!-- AI Summary Box -->
+          <div class="ai-summary-box hidden" id="aiSummaryBox">
+            <h4>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+              </svg>
+              Resumen Inteligente IA
+            </h4>
+            <div class="ai-summary-text" id="aiSummaryText"></div>
+          </div>
         </div>
 
         <!-- Follow-up -->
@@ -390,6 +413,9 @@
   <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-client.js"></script>
+
+  <!-- AI Agent -->
+  <script src="ai-agent.js"></script>
 
   <script src="app.js"></script>
 </body>

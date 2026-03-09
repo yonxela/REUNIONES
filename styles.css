@@ -1015,6 +1015,54 @@ body::before {
   transform: translateY(-2px);
 }
 
+.btn-ai-assist {
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid rgba(138, 43, 226, 0.5);
+  background: rgba(138, 43, 226, 0.1);
+  color: #df9aff;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  transition: all var(--transition-base);
+}
+
+.btn-ai-assist svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-ai-assist:hover {
+  background: rgba(138, 43, 226, 0.2);
+  box-shadow: 0 0 15px rgba(138, 43, 226, 0.3);
+  transform: translateY(-2px);
+}
+
+.btn-ai-assist.recording {
+  background: rgba(255, 71, 87, 0.15);
+  color: #ff4757;
+  border-color: rgba(255, 71, 87, 0.5);
+  animation: pulse-recording 2s infinite;
+}
+
+@keyframes pulse-recording {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 71, 87, 0.4);
+  }
+
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 71, 87, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 71, 87, 0);
+  }
+}
+
 .btn-topic-done {
   margin-top: var(--space-lg);
   padding: var(--space-md) var(--space-xl);
@@ -1452,6 +1500,45 @@ body::before {
   max-width: 700px;
   margin: 0 auto;
   animation: slideUp 0.4s ease;
+}
+
+.ai-summary-box {
+  margin-top: var(--space-xl);
+  padding: var(--space-lg);
+  background: rgba(138, 43, 226, 0.05);
+  /* very light purple */
+  border: 1px solid rgba(138, 43, 226, 0.2);
+  border-radius: var(--radius-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.ai-summary-box::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--accent-gradient);
+}
+
+.ai-summary-box h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: #df9aff;
+  font-size: 1rem;
+  margin-bottom: var(--space-md);
+  font-weight: 600;
+}
+
+.ai-summary-text {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-line;
+  /* Handle markdown/newlines nicely */
 }
 
 .summary-header-icon {

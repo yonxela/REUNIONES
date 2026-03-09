@@ -16,6 +16,14 @@ class MeetingManager {
     this.cacheDOM();
     this.bindEvents();
 
+    if (!this.checkAccess()) {
+      return; // Stop initialization until logged in
+    }
+
+    this.initializeApp();
+  }
+
+  async initializeApp() {
     // Ensure correct initial sidebar state
     this.appContainer.classList.toggle('sidebar-collapsed', !this.sidebarVisible);
 
@@ -31,6 +39,12 @@ class MeetingManager {
   }
 
   cacheDOM() {
+    // Login
+    this.loginScreen = document.getElementById('loginScreen');
+    this.loginCodeInput = document.getElementById('loginCodeInput');
+    this.btnLoginSubmit = document.getElementById('btnLoginSubmit');
+    this.loginErrorMsg = document.getElementById('loginErrorMsg');
+
     // App container
     this.appContainer = document.getElementById('appContainer');
     this.sidebar = document.getElementById('sidebar');
@@ -116,6 +130,12 @@ class MeetingManager {
   }
 
   bindEvents() {
+    // Login
+    this.btnLoginSubmit.addEventListener('click', () => this.handleLogin());
+    this.loginCodeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.handleLogin();
+    });
+
     this.btnNewMeeting.addEventListener('click', () => this.createNewMeeting());
     this.btnToggleSidebar.addEventListener('click', () => this.toggleSidebar());
 
@@ -162,6 +182,30 @@ class MeetingManager {
     this.modalOverlay.addEventListener('click', (e) => {
       if (e.target === this.modalOverlay) this.closeModal();
     });
+  }
+
+  // ===== ATHENTICATION =====
+  checkAccess() {
+    const isLogged = localStorage.getItem('meetflow_access') === '1122';
+    if (isLogged) {
+      if (this.loginScreen) this.loginScreen.classList.add('hidden');
+      return true;
+    } else {
+      if (this.loginScreen) this.loginScreen.classList.remove('hidden');
+      return false;
+    }
+  }
+
+  handleLogin() {
+    const code = this.loginCodeInput.value.trim();
+    if (code === '1122') {
+      localStorage.setItem('meetflow_access', '1122');
+      this.loginErrorMsg.style.display = 'none';
+      this.loginScreen.classList.add('hidden');
+      this.initializeApp();
+    } else {
+      this.loginErrorMsg.style.display = 'block';
+    }
   }
 
   // ===== PERSISTENCE =====

@@ -13,8 +13,30 @@
 </head>
 
 <body>
+  <!-- ===== LOGIN SCREEN ===== -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-box">
+      <div class="logo" style="justify-content: center; margin-bottom: var(--space-xl);">
+        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="8" y="22" width="28" height="12" transform="rotate(-15 8 22)" fill="#FFD700" />
+        </svg>
+        <h1 style="font-size: 1.5rem;">SISDEL <span
+            style="font-weight: 300; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Meets</span>
+        </h1>
+      </div>
+      <h2 style="text-align: center; margin-bottom: var(--space-md); font-weight: 600;">Acceso de Usuario</h2>
+      <p style="text-align: center; color: var(--text-muted); margin-bottom: var(--space-lg); font-size: 0.9rem;">Por
+        favor, ingresa tu código de acceso para continuar.</p>
 
-  <!-- Toggle Sidebar -->
+      <div class="login-input-group">
+        <input type="password" id="loginCodeInput" placeholder="Código de acceso" autocomplete="off">
+        <button id="btnLoginSubmit" class="btn-new-meeting" style="margin-top: var(--space-md);">Ingresar</button>
+      </div>
+      <p id="loginErrorMsg"
+        style="color: var(--danger); text-align: center; margin-top: var(--space-md); font-size: 0.85rem; display: none;">
+        Código incorrecto. Inténtalo de nuevo.</p>
+    </div>
+  </div>
   <button class="btn-toggle-sidebar" id="btnToggleSidebar" title="Mostrar/Ocultar historial">
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

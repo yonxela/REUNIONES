@@ -254,8 +254,27 @@
         <div class="meeting-grid">
           <!-- Timer Card -->
           <div class="timer-card">
-            <div class="timer-display" id="timerDisplay">00:00:00</div>
 
+            <!-- General Meeting Timer (small badge, top-right) -->
+            <div class="meeting-timer-badge" id="meetingTimerBadge">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              <span id="timerDisplay">00:00:00</span>
+            </div>
+
+            <!-- Current Topic (MAIN FOCUS) -->
+            <div class="current-topic-display" id="currentTopicDisplay">
+              <div class="current-topic-label">Tema Actual</div>
+              <div class="current-topic-name" id="currentTopicName">—</div>
+              <div class="topic-timer-display" id="topicTimerDisplay">
+                0:00
+              </div>
+            </div>
+
+            <!-- Controls -->
             <div class="timer-controls">
               <button class="timer-btn btn-play" id="btnPlayTimer">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
@@ -283,25 +302,12 @@
               </button>
             </div>
 
-            <div class="current-topic-display" id="currentTopicDisplay">
-              <div class="current-topic-label">Tema Actual</div>
-              <div class="current-topic-name" id="currentTopicName">—</div>
-              <div class="topic-timer-display" id="topicTimerDisplay">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                0:00 en este tema
-              </div>
-            </div>
-
             <button class="btn-topic-done" id="btnTopicDone">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              Listo, Siguiente
+              Siguiente Tema
             </button>
 
             <div class="all-topics-done-msg hidden" id="allTopicsDoneMsg">

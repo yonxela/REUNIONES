@@ -9,6 +9,7 @@ class MeetingManager {
     this.topicTimerInterval = null;
     this.topicTimerSeconds = 0;
     this.currentTopicIndex = -1;
+    this.currentSubtopicIndex = -1; // -1 = en el tema principal, >=0 = en un subtema
     this.sidebarVisible = window.innerWidth > 900;
   }
 
@@ -363,25 +364,30 @@ class MeetingManager {
   }
 
   async deleteMeeting(id, event) {
-    event.stopPropagation(); // Prevent selectMeeting from firing
-    if (confirm('¿Estás seguro de que deseas eliminar esta reunión? Esta acción no se puede deshacer.')) {
-      this.meetings = this.meetings.filter(m => m.id !== id);
-      this.saveMeetings();
+    if (event) event.stopPropagation();
+    this.openModal(
+      'Eliminar reunión',
+      '¿Estás seguro de que deseas eliminar esta reunión? Esta acción no se puede deshacer.',
+      () => {
+        this.meetings = this.meetings.filter(m => m.id !== id);
+        this.saveMeetings();
 
-      // Also delete explicitly from Supabase
-      if (window.supabaseDb) {
-        window.supabaseDb.from('meetflow_reuniones').delete().eq('id', id).then(r => {
-          console.log("Deleted from DB", r);
-        }).catch(console.error);
+        // Also delete explicitly from Supabase
+        if (window.supabaseDb) {
+          window.supabaseDb.from('meetflow_reuniones').delete().eq('id', id).then(r => {
+            console.log('Deleted from DB', r);
+          }).catch(console.error);
+        }
+
+        this.renderMeetingList();
+        this.showToast('Reunión eliminada', 'info');
+
+        // If we deleted the currently active meeting, go back to welcome screen
+        if (this.currentMeetingId === id) {
+          this.showWelcome();
+        }
       }
-
-      this.renderMeetingList();
-
-      // If we deleted the currently active meeting, go back to welcome screen
-      if (this.currentMeetingId === id) {
-        this.showWelcome();
-      }
-    }
+    );
   }
 
   goToSetupStep() {
@@ -542,7 +548,7 @@ class MeetingManager {
   startTimer() {
     if (this.timerRunning) return;
     this.timerRunning = true;
-    this.timerDisplay.classList.add('running');
+    this.topicTimerDisplay.classList.add('running');
     this.btnPlayTimer.classList.add('hidden');
     this.btnPauseTimer.classList.remove('hidden');
 
@@ -569,7 +575,7 @@ class MeetingManager {
 
   pauseTimer() {
     this.timerRunning = false;
-    this.timerDisplay.classList.remove('running');
+    this.topicTimerDisplay.classList.remove('running');
     clearInterval(this.timerInterval);
     this.timerInterval = null;
     this.btnPauseTimer.classList.add('hidden');
@@ -578,11 +584,12 @@ class MeetingManager {
 
   stopAllTimers() {
     this.timerRunning = false;
-    this.timerDisplay?.classList.remove('running');
+    this.topicTimerDisplay?.classList.remove('running');
     clearInterval(this.timerInterval);
     this.timerInterval = null;
     this.topicTimerSeconds = 0;
     this.currentTopicIndex = -1;
+    this.currentSubtopicIndex = -1;
     this.btnPauseTimer?.classList.add('hidden');
     this.btnPlayTimer?.classList.remove('hidden');
   }
@@ -598,10 +605,22 @@ class MeetingManager {
   updateTopicTimerDisplay() {
     const m = Math.floor(this.topicTimerSeconds / 60);
     const s = this.topicTimerSeconds % 60;
-    this.topicTimerDisplay.textContent = `${m}:${s.toString().padStart(2, '0')} en este tema`;
+    this.topicTimerDisplay.textContent = `${m}:${s.toString().padStart(2, '0')}`;
   }
 
   // ===== CURRENT TOPIC =====
+  // Returns the "active leaf" — either a subtopic or the main topic itself
+  getActiveLeaf() {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting || this.currentTopicIndex < 0) return null;
+    const topic = meeting.topics[this.currentTopicIndex];
+    if (!topic) return null;
+    if (this.currentSubtopicIndex >= 0 && topic.subtopics && topic.subtopics[this.currentSubtopicIndex]) {
+      return { topic, subtopic: topic.subtopics[this.currentSubtopicIndex] };
+    }
+    return { topic, subtopic: null };
+  }
+
   renderCurrentTopic() {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
@@ -612,7 +631,7 @@ class MeetingManager {
       this.currentTopicDisplay.classList.add('hidden');
       this.btnTopicDone.classList.add('hidden');
       this.allTopicsDoneMsg.classList.remove('hidden');
-      this.topicTimerDisplay.textContent = '';
+      this.topicTimerDisplay.textContent = '—';
       this.updateTaskLinkedTopic();
       return;
     }
@@ -622,8 +641,22 @@ class MeetingManager {
     this.btnTopicDone.classList.remove('hidden');
 
     const topic = meeting.topics[this.currentTopicIndex];
-    this.currentTopicName.textContent = topic.name;
-    this.topicTimerSeconds = topic.elapsed || 0;
+    const hasActiveSubtopic = this.currentSubtopicIndex >= 0 && topic.subtopics && topic.subtopics[this.currentSubtopicIndex];
+
+    if (hasActiveSubtopic) {
+      const sub = topic.subtopics[this.currentSubtopicIndex];
+      // Show topic name small + subtopic name large
+      this.currentTopicName.innerHTML =
+        `<span class="current-topic-parent">${this.esc(topic.name)}</span>` +
+        `<span class="current-subtopic-name">${this.esc(sub.name)}</span>`;
+      this.topicTimerSeconds = sub.elapsed || 0;
+      // Update button text
+      this.btnTopicDone.querySelector('span') && (this.btnTopicDone.querySelector('span').textContent = 'Siguiente Tema');
+    } else {
+      this.currentTopicName.innerHTML = this.esc(topic.name);
+      this.topicTimerSeconds = topic.elapsed || 0;
+    }
+
     this.updateTopicTimerDisplay();
     this.updateTaskLinkedTopic();
   }
@@ -632,22 +665,65 @@ class MeetingManager {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting || this.currentTopicIndex < 0) return;
 
-    meeting.topics[this.currentTopicIndex].completed = true;
+    const topic = meeting.topics[this.currentTopicIndex];
+    const hasSubtopics = topic.subtopics && topic.subtopics.length > 0;
+
+    if (hasSubtopics && this.currentSubtopicIndex >= 0) {
+      // Mark current subtopic done
+      topic.subtopics[this.currentSubtopicIndex].completed = true;
+      topic.subtopics[this.currentSubtopicIndex].elapsed = this.topicTimerSeconds;
+
+      // Find next uncompleted subtopic
+      const nextSub = topic.subtopics.findIndex((s, i) => i > this.currentSubtopicIndex && !s.completed);
+      if (nextSub >= 0) {
+        this.currentSubtopicIndex = nextSub;
+        this.topicTimerSeconds = topic.subtopics[nextSub].elapsed || 0;
+        this.saveMeetings();
+        this.renderCurrentTopic();
+        this.renderMeetingAgenda();
+        this.showToast('¡Subtema completado!', 'success');
+        return;
+      } else {
+        // All subtopics done → mark the parent topic done
+        topic.completed = true;
+        this.currentSubtopicIndex = -1;
+      }
+    } else if (hasSubtopics && this.currentSubtopicIndex < 0) {
+      // Topic has subtopics but we are on the parent — jump into first subtopic
+      const firstSub = topic.subtopics.findIndex(s => !s.completed);
+      if (firstSub >= 0) {
+        this.currentSubtopicIndex = firstSub;
+        this.topicTimerSeconds = topic.subtopics[firstSub].elapsed || 0;
+        this.saveMeetings();
+        this.renderCurrentTopic();
+        this.renderMeetingAgenda();
+        this.showToast(`Iniciando subtema: ${topic.subtopics[firstSub].name}`, 'info');
+        return;
+      } else {
+        topic.completed = true;
+      }
+    } else {
+      // No subtopics — mark topic done normally
+      topic.completed = true;
+    }
+
     this.saveMeetings();
 
     // Auto-advance to next uncompleted topic
     const nextIndex = meeting.topics.findIndex((t, i) => i > this.currentTopicIndex && !t.completed);
     if (nextIndex >= 0) {
       this.currentTopicIndex = nextIndex;
+      this.currentSubtopicIndex = -1;
       this.topicTimerSeconds = meeting.topics[nextIndex].elapsed || 0;
     } else {
-      // Check if any earlier topics are uncompleted
       const anyLeft = meeting.topics.findIndex(t => !t.completed);
       if (anyLeft >= 0) {
         this.currentTopicIndex = anyLeft;
+        this.currentSubtopicIndex = -1;
         this.topicTimerSeconds = meeting.topics[anyLeft].elapsed || 0;
       } else {
         this.currentTopicIndex = -1;
+        this.currentSubtopicIndex = -1;
         this.topicTimerSeconds = 0;
       }
     }
@@ -657,14 +733,20 @@ class MeetingManager {
     this.showToast('¡Tema completado!', 'success');
   }
 
-  focusOnTopic(index) {
+  focusOnTopic(index, subtopicIndex = -1) {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
     const topic = meeting.topics[index];
     if (!topic || topic.completed) return;
 
     this.currentTopicIndex = index;
-    this.topicTimerSeconds = topic.elapsed || 0;
+    this.currentSubtopicIndex = subtopicIndex;
+
+    if (subtopicIndex >= 0 && topic.subtopics && topic.subtopics[subtopicIndex]) {
+      this.topicTimerSeconds = topic.subtopics[subtopicIndex].elapsed || 0;
+    } else {
+      this.topicTimerSeconds = topic.elapsed || 0;
+    }
     this.renderCurrentTopic();
     this.renderMeetingAgenda();
   }
@@ -751,13 +833,36 @@ class MeetingManager {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
     const minutes = parseInt(this.topicMinutes.value) || 0;
-    meeting.topics.push({ id: Date.now().toString(), name, estimatedMinutes: minutes, completed: false, elapsed: 0 });
+    meeting.topics.push({ id: Date.now().toString(), name, estimatedMinutes: minutes, completed: false, elapsed: 0, subtopics: [] });
     this.saveMeetings();
     this.topicInput.value = '';
     this.topicMinutes.value = '';
     this.renderTopicsSetup();
     this.updateStartButton();
     this.topicInput.focus();
+  }
+
+  addSubtopic(topicIndex) {
+    const input = document.getElementById(`subtopicInput_${topicIndex}`);
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) return;
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    if (!meeting.topics[topicIndex].subtopics) meeting.topics[topicIndex].subtopics = [];
+    meeting.topics[topicIndex].subtopics.push({ id: Date.now().toString(), name, completed: false, elapsed: 0 });
+    this.saveMeetings();
+    input.value = '';
+    this.renderTopicsSetup();
+    input && document.getElementById(`subtopicInput_${topicIndex}`)?.focus();
+  }
+
+  removeSubtopic(topicIndex, subIndex) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    meeting.topics[topicIndex].subtopics.splice(subIndex, 1);
+    this.saveMeetings();
+    this.renderTopicsSetup();
   }
 
   removeTopic(index) {
@@ -778,21 +883,45 @@ class MeetingManager {
         <p>Agrega temas a la agenda</p></div>`;
       return;
     }
-    this.topicsListSetup.innerHTML = meeting.topics.map((t, i) => `
-      <div class="topic-item-setup">
-        <div class="topic-number">${i + 1}</div>
-        <div class="topic-info">
-          <div class="topic-name">${this.esc(t.name)}</div>
-          <div class="topic-time">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            ${t.estimatedMinutes ? `${t.estimatedMinutes} min` : 'Sin tiempo'}
-          </div>
+    this.topicsListSetup.innerHTML = meeting.topics.map((t, i) => {
+      const subtopicsHtml = (t.subtopics && t.subtopics.length > 0) ? `
+        <div class="subtopics-list-setup">
+          ${t.subtopics.map((sub, si) => `
+            <div class="subtopic-item-setup">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span>${this.esc(sub.name)}</span>
+              <button class="subtopic-delete" onclick="app.removeSubtopic(${i}, ${si})" title="Eliminar subtema">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          `).join('')}
         </div>
-        <button class="topic-delete" onclick="app.removeTopic(${i})" title="Eliminar">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-        </button>
-      </div>
-    `).join('');
+      ` : '';
+
+      return `
+        <div class="topic-item-setup">
+          <div class="topic-number">${i + 1}</div>
+          <div class="topic-info">
+            <div class="topic-name">${this.esc(t.name)}</div>
+            <div class="topic-time">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              ${t.estimatedMinutes ? `${t.estimatedMinutes} min` : 'Sin tiempo'}
+            </div>
+            ${subtopicsHtml}
+            <div class="add-subtopic-row">
+              <input type="text" id="subtopicInput_${i}" placeholder="+ Agregar subtema..."
+                onkeydown="if(event.key==='Enter')app.addSubtopic(${i})">
+              <button class="btn-add-subtopic" onclick="app.addSubtopic(${i})" title="Agregar subtema">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+          <button class="topic-delete" onclick="app.removeTopic(${i})" title="Eliminar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
+        </div>
+      `;
+    }).join('');
   }
 
   updateStartButton() {
@@ -827,14 +956,131 @@ class MeetingManager {
       const eSec = elapsed % 60;
       const timeStr = elapsed > 0 ? `${eMin}:${eSec.toString().padStart(2, '0')}` : '';
 
+      // Render subtopics indented
+      const subtopicsHtml = (t.subtopics && t.subtopics.length > 0 && !isDone) ? t.subtopics.map((sub, si) => {
+        const isCurrentSub = isCurrent && si === this.currentSubtopicIndex;
+        const isSubDone = sub.completed;
+        let subCls = 'agenda-subtopic';
+        if (isSubDone) subCls += ' done';
+        else if (isCurrentSub) subCls += ' current';
+
+        const subElapsed = sub.elapsed || 0;
+        const seMin = Math.floor(subElapsed / 60);
+        const seSec = subElapsed % 60;
+        const subTimeStr = subElapsed > 0 ? `${seMin}:${seSec.toString().padStart(2, '0')}` : '';
+
+        const subIcon = isSubDone
+          ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+          : isCurrentSub
+            ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+            : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/></svg>`;
+
+        return `
+          <div class="${subCls}" onclick="app.focusOnTopic(${i}, ${si})">
+            <div class="agenda-subtopic-icon">${subIcon}</div>
+            <span class="agenda-subtopic-name">${this.esc(sub.name)}</span>
+            ${subTimeStr ? `<span class="agenda-item-time">${subTimeStr}</span>` : ''}
+          </div>
+        `;
+      }).join('') : '';
+
+      // Add-subtopic inline row (hidden by default, shown on toggle)
+      const addSubRow = !isDone ? `
+        <div class="agenda-add-subtopic-row" id="agendaSubRow_${i}" style="display:none;">
+          <input
+            type="text"
+            id="agendaSubInput_${i}"
+            placeholder="Nombre del subtema..."
+            onkeydown="if(event.key==='Enter'){app.addSubtopicDuringMeeting(${i});} if(event.key==='Escape'){app.toggleAgendaSubRow(${i});}"
+          >
+          <button onclick="app.addSubtopicDuringMeeting(${i})" title="Agregar subtema">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+          </button>
+        </div>
+      ` : '';
+
       return `
         <div class="agenda-item ${cls}" onclick="app.focusOnTopic(${i})">
           <div class="agenda-icon">${icon}</div>
           <span class="agenda-item-name">${this.esc(t.name)}</span>
-          ${timeStr ? `<span class="agenda-item-time">${timeStr}</span>` : ''}
+          <span class="agenda-item-right">
+            ${timeStr ? `<span class="agenda-item-time">${timeStr}</span>` : ''}
+            ${!isDone ? `<button class="agenda-check-btn" onclick="event.stopPropagation(); app.markTopicDoneById(${i})" title="Marcar como listo">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>` : ''}
+            ${!isDone ? `<button class="agenda-add-sub-btn" onclick="event.stopPropagation(); app.toggleAgendaSubRow(${i})" title="Agregar subtema">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+            </button>` : ''}
+          </span>
         </div>
+        ${subtopicsHtml}
+        ${addSubRow}
       `;
     }).join('');
+  }
+
+  markTopicDoneById(topicIndex) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const topic = meeting.topics[topicIndex];
+    if (!topic || topic.completed) return;
+
+    topic.completed = true;
+    this.saveMeetings();
+
+    // If this was the current topic, auto-advance
+    if (this.currentTopicIndex === topicIndex) {
+      const nextIndex = meeting.topics.findIndex((t, i) => i > topicIndex && !t.completed);
+      if (nextIndex >= 0) {
+        this.currentTopicIndex = nextIndex;
+        this.currentSubtopicIndex = -1;
+        this.topicTimerSeconds = meeting.topics[nextIndex].elapsed || 0;
+      } else {
+        const anyLeft = meeting.topics.findIndex(t => !t.completed);
+        if (anyLeft >= 0) {
+          this.currentTopicIndex = anyLeft;
+          this.currentSubtopicIndex = -1;
+          this.topicTimerSeconds = meeting.topics[anyLeft].elapsed || 0;
+        } else {
+          this.currentTopicIndex = -1;
+          this.currentSubtopicIndex = -1;
+          this.topicTimerSeconds = 0;
+        }
+      }
+      this.renderCurrentTopic();
+    }
+
+    this.renderMeetingAgenda();
+    this.showToast(`"${topic.name}" completado`, 'success');
+  }
+
+  toggleAgendaSubRow(topicIndex) {
+    const row = document.getElementById(`agendaSubRow_${topicIndex}`);
+    if (!row) return;
+    const isVisible = row.style.display !== 'none';
+    row.style.display = isVisible ? 'none' : 'flex';
+    if (!isVisible) {
+      setTimeout(() => document.getElementById(`agendaSubInput_${topicIndex}`)?.focus(), 50);
+    }
+  }
+
+  addSubtopicDuringMeeting(topicIndex) {
+    const input = document.getElementById(`agendaSubInput_${topicIndex}`);
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) return;
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+
+    if (!meeting.topics[topicIndex].subtopics) meeting.topics[topicIndex].subtopics = [];
+    meeting.topics[topicIndex].subtopics.push({ id: Date.now().toString(), name, completed: false, elapsed: 0 });
+    this.saveMeetings();
+    input.value = '';
+    this.renderMeetingAgenda();
+    // Keep the row open for adding more
+    const row = document.getElementById(`agendaSubRow_${topicIndex}`);
+    if (row) { row.style.display = 'flex'; setTimeout(() => document.getElementById(`agendaSubInput_${topicIndex}`)?.focus(), 20); }
+    this.showToast('Subtema agregado', 'success');
   }
 
   addTopicDuringMeeting() {
@@ -844,7 +1090,7 @@ class MeetingManager {
     if (!name) return;
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
-    meeting.topics.push({ id: Date.now().toString(), name, estimatedMinutes: 0, completed: false, elapsed: 0 });
+    meeting.topics.push({ id: Date.now().toString(), name, estimatedMinutes: 0, completed: false, elapsed: 0, subtopics: [] });
     this.saveMeetings();
     input.value = '';
     this.renderMeetingAgenda();
@@ -922,8 +1168,13 @@ class MeetingManager {
       return;
     }
 
-    this.tasksList.innerHTML = meeting.tasks.map(task => `
-      <div class="task-item ${task.completed ? 'task-done' : ''}">
+    this.tasksList.innerHTML = meeting.tasks.map(task => {
+      const participantsOptions = meeting.participants.map(p =>
+        `<option value="${this.esc(p)}" ${task.assignee === p ? 'selected' : ''}>${this.esc(p)}</option>`
+      ).join('');
+
+      return `
+      <div class="task-item ${task.completed ? 'task-done' : ''}" id="taskItem_${task.id}">
         <div class="task-checkbox ${task.completed ? 'checked' : ''}" onclick="app.toggleTask('${task.id}')">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
@@ -935,11 +1186,74 @@ class MeetingManager {
             ${task.linkedTopic ? `<span class="task-meta-item linked-topic"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${this.esc(task.linkedTopic)}</span>` : ''}
           </div>
         </div>
-        <button class="task-delete-btn" onclick="app.removeTask('${task.id}')">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-        </button>
+        <div class="task-actions">
+          <button class="task-edit-btn" onclick="app.toggleTaskEdit('${task.id}')" title="Editar tarea">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="task-delete-btn" onclick="app.removeTask('${task.id}')" title="Eliminar tarea">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
+        </div>
       </div>
-    `).join('');
+      <div class="task-edit-panel" id="taskEditPanel_${task.id}" style="display:none;">
+        <div class="task-edit-fields">
+          <div class="task-edit-field">
+            <label>Tarea</label>
+            <input type="text" id="taskEditName_${task.id}" value="${this.esc(task.name)}" placeholder="Nombre de la tarea...">
+          </div>
+          <div class="task-edit-field">
+            <label>Responsable</label>
+            <select id="taskEditAssignee_${task.id}">
+              <option value="">Sin responsable</option>
+              ${participantsOptions}
+            </select>
+          </div>
+          <div class="task-edit-field">
+            <label>Fecha límite</label>
+            <input type="date" id="taskEditDate_${task.id}" value="${task.dueDate || ''}">
+          </div>
+        </div>
+        <div class="task-edit-actions">
+          <button class="btn-task-edit-save" onclick="app.saveTaskEdit('${task.id}')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Guardar
+          </button>
+          <button class="btn-task-edit-cancel" onclick="app.toggleTaskEdit('${task.id}')">
+            Cancelar
+          </button>
+        </div>
+      </div>
+      `;
+    }).join('');
+  }
+
+  toggleTaskEdit(taskId) {
+    const panel = document.getElementById(`taskEditPanel_${taskId}`);
+    if (!panel) return;
+    const isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+      setTimeout(() => document.getElementById(`taskEditName_${taskId}`)?.focus(), 50);
+    }
+  }
+
+  saveTaskEdit(taskId) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const task = meeting.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const nameInput = document.getElementById(`taskEditName_${taskId}`);
+    const assigneeInput = document.getElementById(`taskEditAssignee_${taskId}`);
+    const dateInput = document.getElementById(`taskEditDate_${taskId}`);
+
+    if (nameInput && nameInput.value.trim()) task.name = nameInput.value.trim();
+    if (assigneeInput) task.assignee = assigneeInput.value;
+    if (dateInput) task.dueDate = dateInput.value;
+
+    this.saveMeetings();
+    this.renderTasks();
+    this.showToast('Tarea actualizada', 'success');
   }
 
   updateTaskAssigneeOptions() {
@@ -1004,12 +1318,20 @@ class MeetingManager {
       </h4>`;
 
       Object.entries(grouped).forEach(([topic, tasks]) => {
-        html += `<p style="font-size:0.78rem;color:var(--accent-secondary);margin:8px 0 4px 16px;font-weight:600;">${this.esc(topic)}</p><ul>`;
+        html += `<p style="font-size:0.78rem;color:var(--accent-secondary);margin:8px 0 4px 16px;font-weight:600;">${this.esc(topic)}</p><ul class="summary-task-list">`;
         tasks.forEach(t => {
-          let label = this.esc(t.name);
-          if (t.assignee) label += ` → ${this.esc(t.assignee)}`;
-          if (t.dueDate) label += ` (${this.formatDate(t.dueDate)})`;
-          html += `<li>${t.completed ? '✓' : '○'} ${label}</li>`;
+          let meta = '';
+          if (t.assignee) meta += `<span class="summary-task-meta">${this.esc(t.assignee)}</span>`;
+          if (t.dueDate) meta += `<span class="summary-task-meta">${this.formatDate(t.dueDate)}</span>`;
+          html += `
+            <li class="summary-task-item ${t.completed ? 'done' : ''}" onclick="app.toggleTaskFromSummary('${t.id}')">
+              <span class="summary-task-check">${t.completed
+                ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+                : '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>'
+              }</span>
+              <span class="summary-task-name">${this.esc(t.name)}</span>
+              ${meta ? `<span class="summary-task-metas">${meta}</span>` : ''}
+            </li>`;
         });
         html += '</ul>';
       });
@@ -1026,6 +1348,18 @@ class MeetingManager {
       this.aiSummaryBox.classList.add('hidden');
       this.aiSummaryText.innerHTML = '';
     }
+  }
+
+  toggleTaskFromSummary(taskId) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const task = meeting.tasks.find(t => t.id === taskId);
+    if (!task) return;
+    task.completed = !task.completed;
+    this.saveMeetings();
+    this.renderSummary();
+    this.renderMeetingList(); // update pending badge in sidebar
+    this.showToast(task.completed ? 'Tarea completada ✓' : 'Tarea reabierta', task.completed ? 'success' : 'info');
   }
 
   copySummary() {
@@ -1116,18 +1450,104 @@ class MeetingManager {
     this.meetingListEl.innerHTML = html;
   }
 
+  startRenameMeeting(meetingId) {
+    const li = this.meetingListEl.querySelector(`[data-meeting-id="${meetingId}"]`);
+    if (!li) return;
+    const nameDiv = li.querySelector('.meeting-name');
+    if (!nameDiv || nameDiv.tagName === 'INPUT') return; // already editing
+
+    const meeting = this.getMeeting(meetingId);
+    if (!meeting) return;
+
+    const originalTitle = meeting.title || '';
+
+    // Build inline input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = originalTitle;
+    input.placeholder = 'Título de la reunión...';
+    input.className = 'meeting-name-input';
+
+    nameDiv.replaceWith(input);
+    input.select();
+    input.focus();
+
+    let committed = false;
+
+    const commit = (newVal) => {
+      if (committed) return;
+      committed = true;
+      const title = newVal.trim();
+      if (title && title !== originalTitle) {
+        meeting.title = title;
+        this.saveMeetings();
+        if (this.currentMeetingId === meetingId && this.meetingTitleInput) {
+          this.meetingTitleInput.value = title;
+        }
+        this.showToast('Título actualizado', 'success');
+      }
+      // Restore nameDiv with updated text
+      const restored = document.createElement('div');
+      restored.className = 'meeting-name';
+      restored.textContent = meeting.title || 'Sin título';
+      input.replaceWith(restored);
+      // Re-render sidebar to keep everything consistent
+      this.renderMeetingList();
+    };
+
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      const restored = document.createElement('div');
+      restored.className = 'meeting-name';
+      restored.textContent = originalTitle || 'Sin título';
+      input.replaceWith(restored);
+    };
+
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); commit(input.value); }
+      if (e.key === 'Escape') { cancel(); }
+    });
+    input.addEventListener('blur', () => setTimeout(() => commit(input.value), 100));
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
   renderMeetingItem(m) {
     const isActive = m.id === this.currentMeetingId;
     const statusMap = { setup: ['active-status', 'Preparando'], active: ['active-status', 'En curso'], completed: ['completed-status', 'Finalizada'] };
     const [cls, label] = statusMap[m.status] || ['', ''];
-    return `<li class="meeting-item ${isActive ? 'active' : ''}" data-meeting-id="${m.id}" onclick="app.selectMeeting('${m.id}')">
+
+    // Pending tasks badge
+    const pendingTasks = (m.tasks || []).filter(t => !t.completed).length;
+    const pendingBadge = pendingTasks > 0 ? `
+      <span class="meeting-pending-badge" title="${pendingTasks} tarea${pendingTasks > 1 ? 's' : ''} pendiente${pendingTasks > 1 ? 's' : ''}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+        ${pendingTasks}
+      </span>` : '';
+
+    // Follow-up date
+    const followupHtml = m.followupDate ? `
+      <div class="meeting-followup">
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+        Seguimiento: ${this.formatDate(m.followupDate)}
+      </div>` : '';
+
+    return `<li class="meeting-item status-${m.status} ${isActive ? 'active' : ''}" data-meeting-id="${m.id}" onclick="app.selectMeeting('${m.id}')">
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
         <div style="flex:1; overflow:hidden;">
-          <div class="meeting-name">${m.title || 'Sin título'}</div>
+          <div class="meeting-item-top">
+            <div class="meeting-name">${m.title || 'Sin título'}</div>
+            ${pendingBadge}
+            <button class="btn-rename-meeting" onclick="event.stopPropagation(); app.startRenameMeeting('${m.id}')" title="Renombrar reunión">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+          </div>
           <div class="meeting-date">${this.formatDate(m.date)}</div>
-          <span class="meeting-status ${cls}">${label}</span>
+          ${followupHtml}
         </div>
-        <button class="btn-delete-meeting" onclick="app.deleteMeeting('${m.id}', event)" title="Eliminar reunión">
+        <button class="btn-delete-meeting" onclick="event.stopPropagation(); app.deleteMeeting('${m.id}', event)" title="Eliminar reunión">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 6h18"></path>
             <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
@@ -1143,7 +1563,14 @@ class MeetingManager {
     this.modalTitle.textContent = title;
     this.modalBody.textContent = body;
     this.modalOverlay.classList.add('show');
-    this.btnModalConfirm.onclick = () => onConfirm();
+    // Replace button to avoid stacking old handlers
+    const newBtn = this.btnModalConfirm.cloneNode(true);
+    this.btnModalConfirm.parentNode.replaceChild(newBtn, this.btnModalConfirm);
+    this.btnModalConfirm = newBtn;
+    this.btnModalConfirm.onclick = () => {
+      this.closeModal();
+      onConfirm();
+    };
   }
 
   closeModal() { this.modalOverlay.classList.remove('show'); }

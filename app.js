@@ -159,6 +159,11 @@ class MeetingManager {
     this.searchResultsBody = document.getElementById('searchResultsBody');
     this.searchQueryDisplay = document.getElementById('searchQueryDisplay');
     this.btnCloseSearch = document.getElementById('btnCloseSearch');
+
+    // Continuity
+    this.btnCreateFollowup = document.getElementById('btnCreateFollowup');
+    this.continuityBanner = document.getElementById('continuityBanner');
+    this.continuityParentLink = document.getElementById('continuityParentLink');
   }
 
   bindEvents() {
@@ -214,6 +219,11 @@ class MeetingManager {
     this.modalOverlay.addEventListener('click', (e) => {
       if (e.target === this.modalOverlay) this.closeModal();
     });
+
+    // Continuity
+    if (this.btnCreateFollowup) {
+      this.btnCreateFollowup.addEventListener('click', () => this.createFollowupMeeting());
+    }
 
     // Global Search
     if (this.globalSearchInput) {
@@ -1127,7 +1137,70 @@ class MeetingManager {
 
     this.followupDate.value = meeting.followupDate || '';
     this.followupTime.value = meeting.followupTime || '';
+
+    // Show continuity banner if this meeting is a follow-up of another
+    if (meeting.parentMeetingId && this.continuityBanner) {
+      const parent = this.getMeeting(meeting.parentMeetingId);
+      if (parent) {
+        this.continuityBanner.classList.remove('hidden');
+        this.continuityParentLink.textContent = parent.title || 'Reunión anterior';
+      } else {
+        this.continuityBanner.classList.add('hidden');
+      }
+    } else if (this.continuityBanner) {
+      this.continuityBanner.classList.add('hidden');
+    }
+
     this.renderSummary();
+  }
+
+  // ===== MEETING CONTINUITY =====
+  async createFollowupMeeting() {
+    const parent = this.getMeeting(this.currentMeetingId);
+    if (!parent) return;
+
+    const now = new Date();
+    // Use the follow-up date if set, otherwise use today
+    const followDate = parent.followupDate || now.toISOString().split('T')[0];
+    const followTime = parent.followupTime || now.toTimeString().slice(0, 5);
+
+    // Build a descriptive title based on parent
+    const parentTitle = parent.title || 'Reunión';
+    const followupTitle = `Seguimiento: ${parentTitle}`;
+
+    // Carry over pending tasks and all participants
+    const pendingTasks = (parent.tasks || []).filter(t => !t.completed).map(t => ({ ...t, id: Date.now().toString() + Math.random() }));
+
+    const meeting = {
+      id: Date.now().toString(),
+      title: followupTitle,
+      date: followDate,
+      time: followTime,
+      status: 'setup',
+      participants: [...(parent.participants || [])],  // inherit participants
+      topics: [],
+      tasks: pendingTasks,  // carry over pending tasks
+      totalTime: 0,
+      followupDate: '',
+      followupTime: '',
+      parentMeetingId: parent.id,  // link to parent
+      createdAt: now.toISOString()
+    };
+
+    // Mark the parent as having a follow-up meeting created
+    parent.followupMeetingId = meeting.id;
+
+    this.meetings.unshift(meeting);
+    await this.saveMeetings();
+    this.renderMeetingList();
+    this.selectMeeting(meeting.id);
+    this.showToast(`Seguimiento creado con ${pendingTasks.length} tarea${pendingTasks.length !== 1 ? 's' : ''} pendiente${pendingTasks.length !== 1 ? 's' : ''} heredada${pendingTasks.length !== 1 ? 's' : ''}`, 'success');
+  }
+
+  goToParentMeeting() {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting || !meeting.parentMeetingId) return;
+    this.selectMeeting(meeting.parentMeetingId);
   }
 
   saveMeetingDetails() {
@@ -2129,6 +2202,13 @@ class MeetingManager {
         ${pendingTasks}
       </span>` : '';
 
+    // Chain indicator: show if meeting is a follow-up or has a follow-up
+    const chainBadge = m.parentMeetingId ? `
+      <span class="meeting-chain-indicator" title="Seguimiento de reunión anterior">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Seguimiento
+      </span>` : '';
+
     // Follow-up date
     const followupHtml = m.followupDate ? `
       <div class="meeting-followup">
@@ -2142,6 +2222,7 @@ class MeetingManager {
           <div class="meeting-item-top">
             <div class="meeting-name">${m.title || 'Sin título'}</div>
             ${pendingBadge}
+            ${chainBadge}
             <button class="btn-rename-meeting" onclick="event.stopPropagation(); app.startRenameMeeting('${m.id}')" title="Renombrar reunión">
               <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>

@@ -2,40 +2,51 @@ class MeetingManager {
   constructor() {
     this.meetings = [];
     this.currentMeetingId = null;
-    this.currentStep = null; // 'setup' | 'meeting' | 'summary'
+    this.currentStep = null;
     this.timerInterval = null;
     this.timerSeconds = 0;
     this.timerRunning = false;
     this.topicTimerInterval = null;
     this.topicTimerSeconds = 0;
     this.currentTopicIndex = -1;
-    this.currentSubtopicIndex = -1; // -1 = en el tema principal, >=0 = en un subtema
+    this.currentSubtopicIndex = -1;
     this.sidebarVisible = window.innerWidth > 900;
+    // Multi-user
+    this.currentUser = null; // { id, name, isMaster }
   }
 
   async init() {
     this.cacheDOM();
     this.bindEvents();
+    this.bindMasterEvents();
 
     if (!this.checkAccess()) {
-      return; // Stop initialization until logged in
+      return;
     }
 
     this.initializeApp();
   }
 
   async initializeApp() {
-    // Ensure correct initial sidebar state
     this.appContainer.classList.toggle('sidebar-collapsed', !this.sidebarVisible);
+    this.masterPanel?.classList.add('hidden');
+    this.appContainer.classList.remove('hidden');
 
-    // Attempt local storage first to prevent white screens while fetching
-    const localData = localStorage.getItem('meetflow_meetings');
+    // Show user name in sidebar
+    const nameEl = document.getElementById('sidebarUserName');
+    const avatarEl = document.getElementById('sidebarUserAvatar');
+    if (this.currentUser && nameEl) {
+      nameEl.textContent = this.currentUser.name;
+      if (avatarEl) avatarEl.textContent = this.currentUser.name.charAt(0).toUpperCase();
+    }
+
+    const key = this.getMeetingsStorageKey();
+    const localData = localStorage.getItem(key);
     if (localData) this.meetings = JSON.parse(localData);
 
     this.renderMeetingList();
     this.showWelcome();
 
-    // Now load from Supabase
     await this.loadMeetings();
   }
 
@@ -126,8 +137,28 @@ class MeetingManager {
     this.btnModalCancel = document.getElementById('btnModalCancel');
     this.btnModalConfirm = document.getElementById('btnModalConfirm');
 
+    // Master panel
+    this.masterPanel = document.getElementById('masterPanel');
+    this.masterUsersList = document.getElementById('masterUsersList');
+    this.masterStats = document.getElementById('masterStats');
+    this.masterUserForm = document.getElementById('masterUserForm');
+    this.userFormName = document.getElementById('userFormName');
+    this.userFormCode = document.getElementById('userFormCode');
+    this.userFormExpiry = document.getElementById('userFormExpiry');
+    this.userFormId = document.getElementById('userFormId');
+    this.masterCodeInputEl = document.getElementById('masterCodeInput');
+
     // Toast
     this.toastContainer = document.getElementById('toastContainer');
+
+    // Search
+    this.globalSearchInput = document.getElementById('globalSearchInput');
+    this.searchClearBtn = document.getElementById('searchClearBtn');
+    this.searchResultsPanel = document.getElementById('searchResultsPanel');
+    this.searchResultsCount = document.getElementById('searchResultsCount');
+    this.searchResultsBody = document.getElementById('searchResultsBody');
+    this.searchQueryDisplay = document.getElementById('searchQueryDisplay');
+    this.btnCloseSearch = document.getElementById('btnCloseSearch');
   }
 
   bindEvents() {
@@ -183,30 +214,602 @@ class MeetingManager {
     this.modalOverlay.addEventListener('click', (e) => {
       if (e.target === this.modalOverlay) this.closeModal();
     });
+
+    // Global Search
+    if (this.globalSearchInput) {
+      let searchTimer;
+      this.globalSearchInput.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        const q = this.globalSearchInput.value.trim();
+        this.searchClearBtn.classList.toggle('hidden', q.length === 0);
+        if (q.length >= 2) {
+          searchTimer = setTimeout(() => this.performGlobalSearch(q), 250);
+        } else {
+          this.closeSearchResults();
+        }
+      });
+      this.globalSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { this.globalSearchInput.value = ''; this.searchClearBtn.classList.add('hidden'); this.closeSearchResults(); }
+      });
+      this.searchClearBtn.addEventListener('click', () => {
+        this.globalSearchInput.value = '';
+        this.searchClearBtn.classList.add('hidden');
+        this.closeSearchResults();
+        this.globalSearchInput.focus();
+      });
+      this.btnCloseSearch.addEventListener('click', () => this.closeSearchResults());
+    }
   }
 
-  // ===== ATHENTICATION =====
-  checkAccess() {
-    const isLogged = localStorage.getItem('meetflow_access') === '1122';
-    if (isLogged) {
-      if (this.loginScreen) this.loginScreen.classList.add('hidden');
-      return true;
-    } else {
-      if (this.loginScreen) this.loginScreen.classList.remove('hidden');
-      return false;
+  // ===== GLOBAL SEARCH =====
+  performGlobalSearch(query) {
+    try {
+    const meetings = this.meetings;
+    if (!meetings || meetings.length === 0) {
+      this.showSearchResults(query, []);
+      return;
     }
+
+    const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const results = [];
+
+    meetings.forEach(m => {
+      const meetingLabel = m.title || 'Sin título';
+      const meetingDate = this.formatDate(m.date);
+
+      // Search in meeting title
+      const titleNorm = (m.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (titleNorm.includes(q)) {
+        results.push({ type: 'title', meeting: m, meetingLabel, meetingDate, text: m.title || 'Sin título', detail: `Reunión del ${meetingDate}` });
+      }
+
+      // Search in participants
+      (m.participants || []).forEach(p => {
+        const pNorm = p.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (pNorm.includes(q)) {
+          results.push({ type: 'participant', meeting: m, meetingLabel, meetingDate, text: p, detail: `Participante en "${meetingLabel}"` });
+        }
+      });
+
+      // Search in topics
+      (m.topics || []).forEach(t => {
+        const topicName = t.name || t.title || '';
+        const tNorm = topicName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (tNorm.includes(q)) {
+          results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: topicName, detail: `Tema en "${meetingLabel}"`, extra: t.notes || '' });
+        }
+        // Also search in topic notes
+        const notesNorm = (t.notes || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (notesNorm.includes(q) && !tNorm.includes(q)) {
+          const snippet = this.getSearchSnippet(t.notes, query, 80);
+          results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: `Nota en tema: ${topicName}`, detail: snippet });
+        }
+      });
+
+      // Search in tasks
+      (m.tasks || []).forEach(t => {
+        const taskDesc = t.description || t.text || '';
+        const descNorm = taskDesc.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const assigneeNorm = (t.assignee || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (descNorm.includes(q) || assigneeNorm.includes(q)) {
+          results.push({ type: 'task', meeting: m, meetingLabel, meetingDate, text: taskDesc, detail: t.assignee ? `Asignado a: ${t.assignee}` : 'Sin asignar', completed: t.completed });
+        }
+      });
+
+      // Search in AI summary
+      if (m.aiSummary) {
+        const sumNorm = m.aiSummary.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (sumNorm.includes(q)) {
+          const snippet = this.getSearchSnippet(m.aiSummary, query, 120);
+          results.push({ type: 'summary', meeting: m, meetingLabel, meetingDate, text: 'Resumen IA', detail: snippet });
+        }
+      }
+    });
+
+    this.showSearchResults(query, results);
+    } catch(err) {
+      console.warn('[Search] Error:', err.message);
+      this.showSearchResults(query, []);
+    }
+  }
+
+  getSearchSnippet(text, query, maxLen) {
+    const idx = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').indexOf(
+      query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    );
+    if (idx === -1) return text.slice(0, maxLen) + (text.length > maxLen ? '...' : '');
+    const start = Math.max(0, idx - 30);
+    const end = Math.min(text.length, idx + query.length + maxLen - 30);
+    let snippet = text.slice(start, end);
+    if (start > 0) snippet = '...' + snippet;
+    if (end < text.length) snippet += '...';
+    return snippet;
+  }
+
+  highlightText(text, query) {
+    if (!query || !text) return this.esc(text || '');
+    const escaped = text;
+    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return this.esc(escaped).replace(regex, '<span class="search-highlight">$1</span>');
+  }
+
+  showSearchResults(query, results) {
+    this.searchResultsPanel.classList.remove('hidden');
+    this.searchResultsCount.textContent = results.length;
+    this.searchQueryDisplay.innerHTML = `Mostrando resultados para <strong>"${this.esc(query)}"</strong> en ${this.meetings.length} reunión${this.meetings.length !== 1 ? 'es' : ''}`;
+
+    if (results.length === 0) {
+      this.searchResultsBody.innerHTML = `
+        <div class="search-no-results">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+          <h3>Sin resultados</h3>
+          <p>No se encontraron coincidencias para "${this.esc(query)}".<br>Intenta con otro término.</p>
+        </div>`;
+      return;
+    }
+
+    // Group by type
+    const groups = {
+      title: { label: 'Reuniones', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>', items: [] },
+      participant: { label: 'Participantes', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', items: [] },
+      topic: { label: 'Temas / Agenda', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>', items: [] },
+      task: { label: 'Tareas', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>', items: [] },
+      summary: { label: 'Resúmenes IA', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>', items: [] },
+    };
+
+    results.forEach(r => {
+      if (groups[r.type]) groups[r.type].items.push(r);
+    });
+
+    let html = '';
+    for (const [type, group] of Object.entries(groups)) {
+      if (group.items.length === 0) continue;
+      html += `<div class="search-group">`;
+      html += `<div class="search-group-title">${group.icon} ${group.label} <span class="search-group-count">${group.items.length}</span></div>`;
+
+      group.items.forEach(r => {
+        const catClass = `search-cat-${type}`;
+        const catLabel = { title: 'Reunión', participant: 'Participante', topic: 'Tema', task: 'Tarea', summary: 'Resumen IA' }[type];
+
+        let extraHtml = '';
+        if (type === 'task') {
+          const statusClass = r.completed ? 'done' : 'pending';
+          const statusLabel = r.completed ? '✓ Completada' : '⏳ Pendiente';
+          extraHtml = `<span class="search-task-status ${statusClass}">${statusLabel}</span>`;
+        }
+
+        html += `
+          <div class="search-result-card" onclick="app.goToSearchResult('${r.meeting.id}')">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+              <div style="flex:1; min-width:0;">
+                <div class="search-result-meeting-tag">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                  ${this.esc(r.meetingLabel)} · ${r.meetingDate}
+                </div>
+                <div class="search-result-content">${this.highlightText(r.text, query)}</div>
+                <div class="search-result-meta">
+                  <span class="search-result-category ${catClass}">${catLabel}</span>
+                  ${extraHtml}
+                  ${r.detail ? `<span class="search-result-meta-item">${this.highlightText(r.detail, query)}</span>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>`;
+      });
+      html += `</div>`;
+    }
+
+    this.searchResultsBody.innerHTML = html;
+  }
+
+  goToSearchResult(meetingId) {
+    this.closeSearchResults();
+    this.globalSearchInput.value = '';
+    this.searchClearBtn.classList.add('hidden');
+    this.selectMeeting(meetingId);
+  }
+
+  closeSearchResults() {
+    this.searchResultsPanel.classList.add('hidden');
+  }
+
+  // ===== MULTI-USER AUTH =====
+  getMasterCode() {
+    return localStorage.getItem('meetflow_master_code') || 'mst000';
+  }
+
+  getUsers() {
+    return JSON.parse(localStorage.getItem('meetflow_users') || '[]');
+  }
+
+  saveUsers(users) {
+    localStorage.setItem('meetflow_users', JSON.stringify(users));
+  }
+
+  getMeetingsStorageKey() {
+    if (this.currentUser && !this.currentUser.isMaster) {
+      return `meetflow_meetings_${this.currentUser.id}`;
+    }
+    return 'meetflow_meetings'; // legacy / fallback
+  }
+
+  checkAccess() {
+    const session = sessionStorage.getItem('meetflow_session');
+    if (session) {
+      this.currentUser = JSON.parse(session);
+      if (this.currentUser.isMaster) {
+        this.loginScreen.classList.add('hidden');
+        this.showMasterPanel();
+        return false;
+      }
+      this.loginScreen.classList.add('hidden');
+      return true;
+    }
+    this.loginScreen.classList.remove('hidden');
+    return false;
   }
 
   handleLogin() {
     const code = this.loginCodeInput.value.trim();
-    if (code === '1122') {
-      localStorage.setItem('meetflow_access', '1122');
+    if (!code) return;
+
+    // 1. Check master code
+    if (code === this.getMasterCode()) {
+      this.currentUser = { id: 'master', name: 'Master', isMaster: true };
+      sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
       this.loginErrorMsg.style.display = 'none';
       this.loginScreen.classList.add('hidden');
-      this.initializeApp();
-    } else {
-      this.loginErrorMsg.style.display = 'block';
+      this.loginCodeInput.value = '';
+      this.showMasterPanel();
+      return;
     }
+
+    // 2. Check user codes
+    const users = this.getUsers();
+    const user = users.find(u => u.active && u.code === code);
+    if (user) {
+      // Check expiry
+      if (user.expiresAt && new Date(user.expiresAt) < new Date()) {
+        this.loginErrorMsg.textContent = 'Tu acceso ha expirado. Contacta al administrador.';
+        this.loginErrorMsg.style.display = 'block';
+        return;
+      }
+      this.currentUser = { id: user.id, name: user.name, isMaster: false };
+      sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
+      this.loginErrorMsg.style.display = 'none';
+      this.loginScreen.classList.add('hidden');
+      this.loginCodeInput.value = '';
+      this.initializeApp();
+      return;
+    }
+
+    // 3. Legacy fallback (si no hay usuarios configurados)
+    if (users.length === 0 && code === '1122') {
+      this.currentUser = { id: 'legacy', name: 'Usuario', isMaster: false };
+      sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
+      this.loginErrorMsg.style.display = 'none';
+      this.loginScreen.classList.add('hidden');
+      this.loginCodeInput.value = '';
+      this.initializeApp();
+      return;
+    }
+
+    this.loginErrorMsg.textContent = 'Código incorrecto. Inténtalo de nuevo.';
+    this.loginErrorMsg.style.display = 'block';
+  }
+
+  logout() {
+    sessionStorage.removeItem('meetflow_session');
+    this.currentUser = null;
+    this.meetings = [];
+    if (this.masterPanel) this.masterPanel.classList.add('hidden');
+    if (this.appContainer) this.appContainer.classList.add('hidden');
+    if (this.loginScreen) this.loginScreen.classList.remove('hidden');
+    this.loginCodeInput.value = '';
+  }
+
+  // ===== MASTER PANEL =====
+  showMasterPanel() {
+    if (!this.masterPanel) return;
+    this.appContainer.classList.add('hidden');
+    this.masterPanel.classList.remove('hidden');
+    const mc = this.getMasterCode();
+    this.masterCodeInputEl.value = mc;
+    this.renderMasterUsers();
+    this.renderMasterStats();
+  }
+
+  bindMasterEvents() {
+    const $ = id => document.getElementById(id);
+
+    // Logout
+    $('btnMasterLogout')?.addEventListener('click', () => this.logout());
+
+    // Toggle password visibility
+    $('btnToggleCode')?.addEventListener('click', () => {
+      const inp = this.userFormCode;
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    });
+    $('btnToggleMasterCode')?.addEventListener('click', () => {
+      const inp = this.masterCodeInputEl;
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    });
+
+    // Save master code
+    $('btnSaveMasterCode')?.addEventListener('click', () => {
+      const val = this.masterCodeInputEl.value.trim();
+      if (!val || val.length < 4) {
+        this.showToast('El código debe tener al menos 4 caracteres', 'warning');
+        return;
+      }
+      localStorage.setItem('meetflow_master_code', val);
+      this.showToast('Código master actualizado ✓', 'success');
+    });
+
+    // Add user
+    $('btnAddUser')?.addEventListener('click', () => {
+      this.userFormId.value = '';
+      this.userFormName.value = '';
+      this.userFormCode.value = '';
+      this.userFormExpiry.value = '';
+      this.masterUserForm.classList.remove('hidden');
+      this.userFormName.focus();
+    });
+
+    // Save user
+    $('btnSaveUser')?.addEventListener('click', () => this.saveMasterUser());
+
+    // Cancel form
+    $('btnCancelUser')?.addEventListener('click', () => {
+      this.masterUserForm.classList.add('hidden');
+    });
+
+    // Enter on form inputs
+    [$('userFormName'), $('userFormCode'), $('userFormExpiry')].forEach(el => {
+      el?.addEventListener('keydown', e => { if (e.key === 'Enter') this.saveMasterUser(); });
+    });
+  }
+
+  renderMasterUsers() {
+    const users = this.getUsers();
+    if (!this.masterUsersList) return;
+
+    if (users.length === 0) {
+      this.masterUsersList.innerHTML = `
+        <div class="master-empty">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" x2="17" y1="11" y2="11"/></svg>
+          <p>Aún no hay usuarios.<br>Crea el primero con el botón de arriba.</p>
+        </div>`;
+      return;
+    }
+
+    this.masterUsersList.innerHTML = users.map(u => {
+      const now = new Date();
+      const expired = u.expiresAt && new Date(u.expiresAt) < now;
+      const statusClass = !u.active ? 'inactive' : expired ? 'expired' : 'active';
+      const statusLabel = !u.active ? 'Inactivo' : expired ? 'Expirado' : 'Activo';
+      const expiryStr = u.expiresAt ? this.formatDate(u.expiresAt) : 'Sin vencimiento';
+      const meetings = JSON.parse(localStorage.getItem(`meetflow_meetings_${u.id}`) || '[]');
+
+      // Calculate days remaining and time info
+      let daysRemaining = null;
+      let timeRemainingText = '';
+      let timeBarPercent = 100;
+      let timeBarClass = 'time-bar-ok';
+      
+      if (u.expiresAt) {
+        const expiryDate = new Date(u.expiresAt);
+        const diffMs = expiryDate - now;
+        daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        
+        if (daysRemaining < 0) {
+          timeRemainingText = `Venció hace ${Math.abs(daysRemaining)} día${Math.abs(daysRemaining) !== 1 ? 's' : ''}`;
+          timeBarPercent = 0;
+          timeBarClass = 'time-bar-expired';
+        } else if (daysRemaining === 0) {
+          timeRemainingText = 'Vence hoy';
+          timeBarPercent = 5;
+          timeBarClass = 'time-bar-critical';
+        } else if (daysRemaining <= 3) {
+          timeRemainingText = `${daysRemaining} día${daysRemaining !== 1 ? 's' : ''} restante${daysRemaining !== 1 ? 's' : ''}`;
+          timeBarPercent = Math.max(10, Math.min(100, (daysRemaining / 30) * 100));
+          timeBarClass = 'time-bar-critical';
+        } else if (daysRemaining <= 7) {
+          timeRemainingText = `${daysRemaining} días restantes`;
+          timeBarPercent = Math.max(15, Math.min(100, (daysRemaining / 30) * 100));
+          timeBarClass = 'time-bar-warning';
+        } else if (daysRemaining <= 30) {
+          timeRemainingText = `${daysRemaining} días restantes`;
+          timeBarPercent = Math.max(20, Math.min(100, (daysRemaining / 30) * 100));
+          timeBarClass = 'time-bar-ok';
+        } else {
+          const months = Math.floor(daysRemaining / 30);
+          const remDays = daysRemaining % 30;
+          timeRemainingText = months > 0 
+            ? `${months} mes${months > 1 ? 'es' : ''}${remDays > 0 ? ` y ${remDays}d` : ''}`
+            : `${daysRemaining} días`;
+          timeBarPercent = 100;
+          timeBarClass = 'time-bar-ok';
+        }
+      } else {
+        timeRemainingText = 'Acceso ilimitado';
+        timeBarClass = 'time-bar-unlimited';
+      }
+
+      const createdStr = u.createdAt ? this.formatDate(u.createdAt.split('T')[0]) : '—';
+
+      return `
+        <div class="master-user-card ${statusClass}">
+          <div class="master-user-info">
+            <div class="master-user-avatar">${u.name.charAt(0).toUpperCase()}</div>
+            <div class="master-user-details">
+              <div class="master-user-name">${this.esc(u.name)}</div>
+              <div class="master-user-meta">
+                <span class="master-user-stat">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg>
+                  ${meetings.length} reuniones
+                </span>
+                <span class="master-user-stat">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Creado: ${createdStr}
+                </span>
+              </div>
+            </div>
+            <span class="master-status-badge ${statusClass}">${statusLabel}</span>
+          </div>
+          
+          <!-- Time Validation Section -->
+          <div class="master-user-time-section">
+            <div class="master-time-header">
+              <div class="master-time-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+              </div>
+              <span class="master-time-label">Validez del acceso</span>
+              <span class="master-time-remaining ${timeBarClass}">${timeRemainingText}</span>
+            </div>
+            ${u.expiresAt ? `
+              <div class="master-time-bar-container">
+                <div class="master-time-bar ${timeBarClass}" style="width: ${timeBarPercent}%"></div>
+              </div>
+              <div class="master-time-dates">
+                <span>Vence: ${expiryStr}</span>
+                ${daysRemaining !== null && daysRemaining >= 0 ? `<span class="master-time-countdown">${daysRemaining}d</span>` : ''}
+              </div>
+            ` : `
+              <div class="master-time-bar-container">
+                <div class="master-time-bar time-bar-unlimited" style="width: 100%"></div>
+              </div>
+              <div class="master-time-dates">
+                <span>Sin fecha de vencimiento</span>
+                <span class="master-time-countdown">∞</span>
+              </div>
+            `}
+          </div>
+
+          <div class="master-user-actions">
+            <button class="btn-master-action edit" onclick="app.editMasterUser('${u.id}')" title="Editar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="btn-master-action toggle" onclick="app.toggleMasterUser('${u.id}')" title="${u.active ? 'Desactivar' : 'Activar'}">
+              ${u.active
+                ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/></svg>'
+                : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+              }
+            </button>
+            <button class="btn-master-action delete" onclick="app.deleteMasterUser('${u.id}')" title="Eliminar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  renderMasterStats() {
+    const users = this.getUsers();
+    const total = users.length;
+    const active = users.filter(u => u.active && (!u.expiresAt || new Date(u.expiresAt) >= new Date())).length;
+    const expiring = users.filter(u => {
+      if (!u.expiresAt) return false;
+      const d = new Date(u.expiresAt);
+      const now = new Date();
+      const diff = (d - now) / (1000 * 60 * 60 * 24);
+      return diff >= 0 && diff <= 7;
+    }).length;
+
+    this.masterStats.innerHTML = `
+      <div class="master-stats-grid">
+        <div class="master-stat-card">
+          <div class="master-stat-number">${total}</div>
+          <div class="master-stat-label">Usuarios totales</div>
+        </div>
+        <div class="master-stat-card success">
+          <div class="master-stat-number">${active}</div>
+          <div class="master-stat-label">Activos</div>
+        </div>
+        <div class="master-stat-card warning">
+          <div class="master-stat-number">${expiring}</div>
+          <div class="master-stat-label">Expiran pronto</div>
+        </div>
+      </div>`;
+  }
+
+  saveMasterUser() {
+    const name = this.userFormName.value.trim();
+    const code = this.userFormCode.value.trim();
+    const expiry = this.userFormExpiry.value;
+    const editId = this.userFormId.value;
+
+    if (!name) { this.showToast('El nombre es obligatorio', 'warning'); return; }
+    if (!editId && !code) { this.showToast('El código es obligatorio', 'warning'); return; }
+    if (code && code.length < 3) { this.showToast('El código debe tener al menos 3 caracteres', 'warning'); return; }
+
+    // Check duplicate code
+    const users = this.getUsers();
+    const duplicate = users.find(u => u.code === code && u.id !== editId);
+    if (code && duplicate) { this.showToast('Ese código ya está en uso por otro usuario', 'warning'); return; }
+
+    if (editId) {
+      const idx = users.findIndex(u => u.id === editId);
+      if (idx >= 0) {
+        users[idx].name = name;
+        if (code) users[idx].code = code;
+        users[idx].expiresAt = expiry || null;
+      }
+      this.showToast('Usuario actualizado ✓', 'success');
+    } else {
+      users.push({
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36),
+        name, code,
+        expiresAt: expiry || null,
+        createdAt: new Date().toISOString(),
+        active: true
+      });
+      this.showToast('Usuario creado ✓', 'success');
+    }
+
+    this.saveUsers(users);
+    this.masterUserForm.classList.add('hidden');
+    this.userFormId.value = '';
+    this.renderMasterUsers();
+    this.renderMasterStats();
+  }
+
+  editMasterUser(userId) {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    this.userFormId.value = user.id;
+    this.userFormName.value = user.name;
+    this.userFormCode.value = user.code;
+    this.userFormExpiry.value = user.expiresAt || '';
+    this.masterUserForm.classList.remove('hidden');
+    this.userFormName.focus();
+    this.masterUserForm.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  toggleMasterUser(userId) {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    user.active = !user.active;
+    this.saveUsers(users);
+    this.renderMasterUsers();
+    this.renderMasterStats();
+    this.showToast(user.active ? 'Usuario activado' : 'Usuario desactivado', 'info');
+  }
+
+  deleteMasterUser(userId) {
+    this.openModal(
+      'Eliminar usuario',
+      '¿Eliminar este usuario? Sus reuniones se conservarán en local pero no podrá acceder.',
+      () => {
+        const users = this.getUsers().filter(u => u.id !== userId);
+        this.saveUsers(users);
+        this.renderMasterUsers();
+        this.renderMasterStats();
+        this.showToast('Usuario eliminado', 'info');
+      }
+    );
   }
 
   // ===== PERSISTENCE =====
@@ -237,8 +840,8 @@ class MeetingManager {
   }
 
   async saveMeetings() {
-    // Save to local storage fast to ensure zero-lag UI
-    localStorage.setItem('meetflow_meetings', JSON.stringify(this.meetings));
+    const key = this.getMeetingsStorageKey();
+    localStorage.setItem(key, JSON.stringify(this.meetings));
 
     if (window.supabaseDb && this.currentMeetingId) {
       const activeMeeting = this.meetings.find(m => m.id === this.currentMeetingId);
@@ -246,11 +849,10 @@ class MeetingManager {
         try {
           const { error } = await window.supabaseDb
             .from('meetflow_reuniones')
-            .upsert([activeMeeting]);
-
+            .upsert([{ ...activeMeeting, userId: this.currentUser?.id }]);
           if (error) throw error;
         } catch (e) {
-          console.error("Error saving meeting to Supabase:", e);
+          console.error('Error saving meeting to Supabase:', e);
         }
       }
     }

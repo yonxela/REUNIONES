@@ -2786,6 +2786,25 @@ body::before {
 }
 
 /* ===== CATEGORIES ===== */
+.category-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.category-toggle-btn:hover {
+  color: var(--accent-primary);
+}
+.category-toggle-btn.has-categories {
+  color: var(--accent-primary);
+}
+
 .category-bar {
   display: flex;
   align-items: center;

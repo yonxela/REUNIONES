@@ -2447,6 +2447,9 @@ class MeetingManager {
 
   saveCategories() {
     localStorage.setItem(this.getCategoriesKey(), JSON.stringify(this.categories));
+    // Update toggle button state
+    const toggleBtn = document.getElementById('btnToggleCategories');
+    if (toggleBtn) toggleBtn.classList.toggle('has-categories', this.categories.length > 0);
   }
 
   addCategory(name) {
@@ -2556,6 +2559,17 @@ class MeetingManager {
   }
 
   bindCategoryEvents() {
+    // Main toggle button (always visible in search bar)
+    const toggleBtn = document.getElementById('btnToggleCategories');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        this.categoryManager?.classList.toggle('hidden');
+        if (!this.categoryManager?.classList.contains('hidden')) {
+          this.renderCategoryManager();
+          this.newCategoryInput?.focus();
+        }
+      });
+    }
     if (this.btnManageCategories) {
       this.btnManageCategories.addEventListener('click', () => {
         this.categoryManager?.classList.toggle('hidden');

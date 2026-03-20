@@ -15,14 +15,24 @@ class MeetingManager {
     this.currentUser = null;
     // Categories
     this.categories = [];
-    this.activeCategory = null; // null = show all
+    this.activeCategory = null;
     this.collapsedCategories = new Set();
+    // Realtime
+    this.realtime = null;
+    this.isGuestMode = false;
   }
 
   async init() {
     this.cacheDOM();
     this.bindEvents();
     this.bindMasterEvents();
+
+    // Check if this is a guest joining via ?join= link
+    const joinId = MeetingRealtime.getJoinIdFromURL();
+    if (joinId) {
+      this.showGuestJoinScreen(joinId);
+      return;
+    }
 
     // Auto-register legacy user (Yonathan Rodas / 1122) in master panel
     this.migrateLegacyUser();
@@ -63,6 +73,16 @@ class MeetingManager {
     this.renderMeetingList(); // re-render with categories
 
     await this.loadMeetings();
+
+    // Initialize realtime
+    if (typeof supabaseClient !== 'undefined') {
+      this.realtime = new MeetingRealtime(supabaseClient);
+      // Listen for state requests from guests
+      this.realtime.onPresenceUpdate = (users) => this.updatePresenceUI(users);
+    }
+
+    // Bind share button
+    this.bindShareEvents();
   }
 
   cacheDOM() {
@@ -1377,6 +1397,11 @@ class MeetingManager {
         const meeting = this.getMeeting(this.currentMeetingId);
         if (meeting) { meeting.totalTime = this.timerSeconds; this.saveMeetings(); }
       }
+
+      // Broadcast state to guests every 2 seconds
+      if (this.timerSeconds % 2 === 0) {
+        this.broadcastMeetingState();
+      }
     }, 1000);
   }
 
@@ -2595,6 +2620,325 @@ class MeetingManager {
         }
       });
     }
+  }
+
+  // ===== REALTIME COLLABORATION =====
+
+  bindShareEvents() {
+    const btnShare = document.getElementById('btnShareMeeting');
+    const btnClose = document.getElementById('btnCloseShareModal');
+    const btnCopy = document.getElementById('btnCopyShareLink');
+    const btnWhatsApp = document.getElementById('btnShareWhatsApp');
+    const overlay = document.getElementById('shareModalOverlay');
+
+    if (btnShare) {
+      btnShare.addEventListener('click', () => this.shareMeeting());
+    }
+    if (btnClose) {
+      btnClose.addEventListener('click', () => overlay?.classList.add('hidden'));
+    }
+    if (overlay) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.classList.add('hidden');
+      });
+    }
+    if (btnCopy) {
+      btnCopy.addEventListener('click', () => {
+        const input = document.getElementById('shareLinkInput');
+        if (input) {
+          navigator.clipboard.writeText(input.value).then(() => {
+            this.showToast('Link copiado ✓', 'success');
+          });
+        }
+      });
+    }
+    if (btnWhatsApp) {
+      btnWhatsApp.addEventListener('click', () => {
+        const input = document.getElementById('shareLinkInput');
+        if (input) {
+          const meeting = this.getMeeting(this.currentMeetingId);
+          const title = meeting?.title || 'reunión';
+          const text = `📡 Únete a la reunión "${title}" en vivo:\n${input.value}`;
+          window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+        }
+      });
+    }
+  }
+
+  async shareMeeting() {
+    if (!this.currentMeetingId || !this.realtime) return;
+
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+
+    // Start sharing (creates channel + returns link)
+    const link = await this.realtime.startSharing(this.currentMeetingId);
+
+    // Listen for guest state requests
+    this.realtime.channel.on('broadcast', { event: 'request_state' }, () => {
+      this.broadcastMeetingState();
+    });
+
+    // Show modal with link
+    const overlay = document.getElementById('shareModalOverlay');
+    const input = document.getElementById('shareLinkInput');
+    if (input) input.value = link;
+    overlay?.classList.remove('hidden');
+
+    // Show presence indicator
+    const presenceEl = document.getElementById('livePresence');
+    presenceEl?.classList.remove('hidden');
+
+    this.showToast('📡 Reunión compartida en vivo', 'success');
+  }
+
+  broadcastMeetingState() {
+    if (!this.realtime || !this.currentMeetingId) return;
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (meeting) {
+      this.realtime.broadcastState(meeting);
+    }
+  }
+
+  updatePresenceUI(users) {
+    const presenceEl = document.getElementById('livePresence');
+    const countEl = document.getElementById('liveCount');
+    if (!presenceEl || !countEl) return;
+
+    const guestCount = users.filter(u => u.role === 'guest').length;
+    if (guestCount > 0) {
+      presenceEl.classList.remove('hidden');
+      countEl.textContent = guestCount;
+    } else if (!this.realtime?.isHost) {
+      // Don't hide if host, keep visible
+    }
+  }
+
+  // ===== GUEST JOIN FLOW =====
+
+  async showGuestJoinScreen(meetingId) {
+    // Hide login and app
+    this.loginScreen?.classList.add('hidden');
+    this.appContainer?.classList.add('hidden');
+
+    // Fetch meeting title from Supabase
+    try {
+      const { data } = await supabaseClient
+        .from('meetflow_reuniones')
+        .select('title, status')
+        .eq('id', meetingId)
+        .single();
+
+      if (data) {
+        const titleEl = document.getElementById('guestMeetingTitle');
+        if (titleEl) titleEl.textContent = data.title || 'Reunión';
+
+        if (data.status === 'completed') {
+          const subtitleEl = document.querySelector('.guest-join-subtitle');
+          if (subtitleEl) subtitleEl.textContent = 'Esta reunión ya finalizó';
+          const btn = document.getElementById('btnGuestJoin');
+          if (btn) { btn.disabled = true; btn.textContent = 'Reunión finalizada'; }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch meeting info:', e);
+    }
+
+    // Show guest join screen
+    const screen = document.getElementById('guestJoinScreen');
+    screen?.classList.remove('hidden');
+
+    // Bind join button
+    const btnJoin = document.getElementById('btnGuestJoin');
+    const nameInput = document.getElementById('guestNameInput');
+
+    const doJoin = () => {
+      const name = nameInput?.value.trim();
+      if (!name) {
+        nameInput?.focus();
+        return;
+      }
+      this.joinAsGuest(meetingId, name);
+    };
+
+    btnJoin?.addEventListener('click', doJoin);
+    nameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doJoin();
+    });
+
+    nameInput?.focus();
+  }
+
+  async joinAsGuest(meetingId, guestName) {
+    this.isGuestMode = true;
+
+    // Hide join screen, show app
+    document.getElementById('guestJoinScreen')?.classList.add('hidden');
+    this.loginScreen?.classList.add('hidden');
+    this.appContainer?.classList.remove('hidden');
+
+    // Hide sidebar (guests don't need it)
+    this.appContainer?.classList.add('sidebar-collapsed');
+
+    // Init realtime
+    this.realtime = new MeetingRealtime(supabaseClient);
+
+    // When we receive state updates, render them
+    this.realtime.onStateUpdate = (state) => {
+      this.renderGuestView(state, guestName);
+    };
+
+    this.realtime.onPresenceUpdate = (users) => {
+      this.updatePresenceUI(users);
+    };
+
+    // Join the channel
+    await this.realtime.joinMeeting(meetingId, guestName);
+
+    // Show initial loading state
+    this.renderGuestView({ title: 'Conectando...', status: 'loading' }, guestName);
+
+    // Also load from Supabase as fallback
+    try {
+      const { data } = await supabaseClient
+        .from('meetflow_reuniones')
+        .select('*')
+        .eq('id', meetingId)
+        .single();
+
+      if (data) {
+        this.renderGuestView({
+          ...data,
+          currentTopicIndex: 0,
+          timerRunning: false,
+          timerSeconds: data.totalTime || 0,
+          topicTimerSeconds: 0
+        }, guestName);
+      }
+    } catch (e) {
+      console.warn('Could not load meeting from Supabase:', e);
+    }
+  }
+
+  renderGuestView(state, guestName) {
+    const main = document.querySelector('.main-content');
+    if (!main) return;
+
+    if (state.status === 'completed') {
+      main.innerHTML = `
+        <div class="welcome-screen" style="display:flex">
+          <div class="welcome-icon" style="color: #10b981;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </div>
+          <h2>Reunión Finalizada</h2>
+          <p>La reunión "${state.title || ''}" ha terminado. Gracias por participar.</p>
+        </div>`;
+      return;
+    }
+
+    if (state.status === 'loading') {
+      main.innerHTML = `
+        <div class="welcome-screen" style="display:flex">
+          <div class="welcome-icon"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+          <h2>Conectando a la reunión...</h2>
+          <p>Esperando datos del moderador</p>
+        </div>`;
+      return;
+    }
+
+    const topics = state.topics || [];
+    const tasks = state.tasks || [];
+    const currentIdx = state.currentTopicIndex ?? -1;
+    const timerSec = state.topicTimerSeconds || 0;
+    const totalSec = state.timerSeconds || 0;
+    const running = state.timerRunning || false;
+
+    const formatTime = (s) => {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}:${String(sec).padStart(2, '0')}`;
+    };
+
+    const topicsHtml = topics.map((t, i) => {
+      const isCurrent = i === currentIdx;
+      const icon = t.completed ? '✅' : (isCurrent ? '▶' : '○');
+      const cls = isCurrent ? 'style="color:var(--accent-primary);font-weight:600;"' : '';
+      const subtopicsHtml = (t.subtopics || []).map(st =>
+        `<div style="padding:2px 0 2px 24px;font-size:0.8rem;color:var(--text-muted);">• ${this.esc(st.name)}</div>`
+      ).join('');
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--border);" ${cls}>
+        <span>${icon} ${this.esc(t.name)}</span>
+        ${isCurrent ? `<span style="float:right;color:var(--accent-primary);font-size:0.85rem;">${formatTime(t.elapsed || 0)}</span>` : ''}
+        ${subtopicsHtml}
+      </div>`;
+    }).join('');
+
+    const tasksHtml = tasks.length > 0 ? tasks.map(t =>
+      `<div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+        <span>${t.completed ? '✅' : '☐'} ${this.esc(t.name)}</span>
+        <span style="font-size:0.75rem;color:var(--text-muted);">${this.esc(t.assignee || '')}</span>
+      </div>`
+    ).join('') : '<div style="color:var(--text-muted);font-size:0.85rem;padding:12px 0;">Aún no hay tareas</div>';
+
+    const connectedUsers = this.realtime?.getConnectedUsers() || [];
+    const presenceHtml = connectedUsers.map(u =>
+      `<span style="padding:2px 8px;border-radius:10px;font-size:0.72rem;background:${u.role === 'host' ? 'rgba(139,92,246,0.2)' : 'rgba(16,185,129,0.2)'};color:${u.role === 'host' ? 'var(--accent-primary)' : '#10b981'};margin:2px;">${u.role === 'host' ? '👑' : '👤'} ${this.esc(u.name)}</span>`
+    ).join('');
+
+    main.innerHTML = `
+      <div style="max-width:1000px;margin:0 auto;padding:24px;">
+        <!-- Header -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
+          <div>
+            <h2 style="margin:0;font-size:1.5rem;color:var(--text-primary);">${this.esc(state.title || 'Reunión')}</h2>
+            <p style="margin:4px 0 0;color:var(--text-muted);font-size:0.85rem;">${state.date || ''} · ${state.time || ''}</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="live-presence">
+              <span class="live-dot"></span>
+              <span>EN VIVO</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connected Users -->
+        <div style="margin-bottom:16px;display:flex;flex-wrap:wrap;gap:4px;">
+          ${presenceHtml}
+          <span style="padding:2px 8px;border-radius:10px;font-size:0.72rem;background:rgba(16,185,129,0.2);color:#10b981;margin:2px;">👤 ${this.esc(guestName)} (Tú)</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+          <!-- Left: Timer + Current Topic -->
+          <div>
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;text-align:center;margin-bottom:16px;">
+              <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:8px;">⏱ Tiempo Total</div>
+              <div style="font-size:2rem;font-weight:700;color:var(--accent-primary);font-family:monospace;">${formatTime(totalSec)}</div>
+              ${running ? '<div style="font-size:0.75rem;color:#10b981;margin-top:4px;">● En curso</div>' : '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">⏸ Pausado</div>'}
+            </div>
+
+            ${currentIdx >= 0 && topics[currentIdx] ? `
+            <div style="background:var(--bg-secondary);border:2px solid var(--accent-primary);border-radius:var(--radius-lg);padding:20px;text-align:center;">
+              <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--accent-primary);margin-bottom:8px;">Tema Actual</div>
+              <div style="font-size:1.2rem;font-weight:600;color:var(--text-primary);">${this.esc(topics[currentIdx].name)}</div>
+              <div style="font-size:1.5rem;font-weight:700;color:var(--accent-primary);margin-top:8px;font-family:monospace;">${formatTime(timerSec)}</div>
+            </div>` : ''}
+          </div>
+
+          <!-- Right: Agenda -->
+          <div>
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;">
+              <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;">📋 Agenda</div>
+              ${topicsHtml || '<div style="color:var(--text-muted);">Sin temas</div>'}
+            </div>
+          </div>
+        </div>
+
+        <!-- Tasks -->
+        <div style="margin-top:20px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;">
+          <div style="font-size:0.8rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;">☑ Tareas Pactadas (${tasks.length})</div>
+          ${tasksHtml}
+        </div>
+      </div>`;
   }
 }
 

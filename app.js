@@ -2666,18 +2666,26 @@ class MeetingManager {
   }
 
   async shareMeeting() {
-    if (!this.currentMeetingId || !this.realtime) return;
+    if (!this.currentMeetingId) return;
 
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
 
-    // Start sharing (creates channel + returns link)
-    const link = await this.realtime.startSharing(this.currentMeetingId);
+    let link;
 
-    // Listen for guest state requests
-    this.realtime.channel.on('broadcast', { event: 'request_state' }, () => {
-      this.broadcastMeetingState();
-    });
+    if (this.realtime) {
+      // Start sharing (creates channel + returns link)
+      link = await this.realtime.startSharing(this.currentMeetingId);
+
+      // Listen for guest state requests
+      this.realtime.channel.on('broadcast', { event: 'request_state' }, () => {
+        this.broadcastMeetingState();
+      });
+    } else {
+      // Fallback: generate link without channel
+      const base = window.location.origin + window.location.pathname;
+      link = `${base}?join=${this.currentMeetingId}`;
+    }
 
     // Show modal with link
     const overlay = document.getElementById('shareModalOverlay');

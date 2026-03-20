@@ -20,6 +20,9 @@ class MeetingManager {
     this.bindEvents();
     this.bindMasterEvents();
 
+    // Auto-register legacy user (Yonathan Rodas / 1122) in master panel
+    this.migrateLegacyUser();
+
     if (!this.checkAccess()) {
       return;
     }
@@ -436,6 +439,38 @@ class MeetingManager {
     localStorage.setItem('meetflow_users', JSON.stringify(users));
   }
 
+  // Migrates the pre-multiuser legacy account (1122 / Yonathan Rodas) into the
+  // users list so it appears in the Master Panel. Called once at app startup.
+  migrateLegacyUser() {
+    const users = this.getUsers();
+    const alreadyMigrated = users.find(u => u.id === 'legacy');
+    if (alreadyMigrated) return; // already done
+
+    // Register Yonathan Rodas as a proper panel user
+    const legacyUser = {
+      id: 'legacy',
+      name: 'Yonathan Rodas',
+      code: '1122',
+      active: true,
+      expiresAt: null, // sin expiración
+      createdAt: new Date().toISOString(),
+      isLegacy: true  // marker so we can display it differently if needed
+    };
+    users.push(legacyUser);
+    this.saveUsers(users);
+
+    // Migrate meeting data: if old 'meetflow_meetings' has data and
+    // 'meetflow_meetings_legacy' is empty, copy it over
+    const oldKey = 'meetflow_meetings';
+    const newKey = 'meetflow_meetings_legacy';
+    const existingNew = localStorage.getItem(newKey);
+    const existingOld = localStorage.getItem(oldKey);
+    if (!existingNew && existingOld) {
+      localStorage.setItem(newKey, existingOld);
+      console.log('[Migration] Meeting data copied from', oldKey, 'to', newKey);
+    }
+  }
+
   getMeetingsStorageKey() {
     if (this.currentUser && !this.currentUser.isMaster) {
       return `meetflow_meetings_${this.currentUser.id}`;
@@ -496,7 +531,8 @@ class MeetingManager {
     // 3. Legacy fallback — siempre válido para compatibilidad con usuarios anteriores
     const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
     if (legacyCodes.includes(code)) {
-      this.currentUser = { id: 'legacy_' + code, name: 'Usuario ' + code, isMaster: false };
+      // Use fixed id 'legacy' to preserve existing meeting data storage key
+      this.currentUser = { id: 'legacy', name: 'Yonathan Rodas', isMaster: false };
       sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
       this.loginErrorMsg.style.display = 'none';
       this.loginScreen.classList.add('hidden');

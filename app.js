@@ -12,7 +12,11 @@ class MeetingManager {
     this.currentSubtopicIndex = -1;
     this.sidebarVisible = window.innerWidth > 900;
     // Multi-user
-    this.currentUser = null; // { id, name, isMaster }
+    this.currentUser = null;
+    // Categories
+    this.categories = [];
+    this.activeCategory = null; // null = show all
+    this.collapsedCategories = new Set();
   }
 
   async init() {
@@ -52,6 +56,11 @@ class MeetingManager {
 
     this.renderMeetingList();
     this.showWelcome();
+
+    // Load categories
+    this.loadCategories();
+    this.bindCategoryEvents();
+    this.renderMeetingList(); // re-render with categories
 
     await this.loadMeetings();
   }
@@ -170,6 +179,18 @@ class MeetingManager {
     this.btnCreateFollowup = document.getElementById('btnCreateFollowup');
     this.continuityBanner = document.getElementById('continuityBanner');
     this.continuityParentLink = document.getElementById('continuityParentLink');
+
+    // Categories
+    this.categoryBar = document.getElementById('categoryBar');
+    this.categoryChips = document.getElementById('categoryChips');
+    this.btnManageCategories = document.getElementById('btnManageCategories');
+    this.categoryManager = document.getElementById('categoryManager');
+    this.btnCloseCategoryManager = document.getElementById('btnCloseCategoryManager');
+    this.newCategoryInput = document.getElementById('newCategoryInput');
+    this.btnAddCategory = document.getElementById('btnAddCategory');
+    this.categoryManagerList = document.getElementById('categoryManagerList');
+    this.meetingContextMenu = document.getElementById('meetingContextMenu');
+    this.contextMenuItems = document.getElementById('contextMenuItems');
   }
 
   bindEvents() {
@@ -2216,8 +2237,22 @@ class MeetingManager {
   }
 
   renderMeetingList() {
-    const active = this.meetings.filter(m => m.status !== 'completed');
-    const completed = this.meetings.filter(m => m.status === 'completed');
+    const cats = this.categories;
+    const hasCats = cats.length > 0;
+
+    // Show/hide category bar
+    if (this.categoryBar) {
+      this.categoryBar.classList.toggle('hidden', !hasCats);
+    }
+
+    // Filter by active category
+    let filtered = this.meetings;
+    if (this.activeCategory !== null && hasCats) {
+      filtered = this.meetings.filter(m => (m.category || '') === this.activeCategory);
+    }
+
+    const active = filtered.filter(m => m.status !== 'completed');
+    const completed = filtered.filter(m => m.status === 'completed');
     let html = '';
 
     if (active.length > 0) {
@@ -2230,10 +2265,13 @@ class MeetingManager {
       completed.forEach(m => html += this.renderMeetingItem(m));
       html += '</ul>';
     }
-    if (this.meetings.length === 0) {
-      html = `<div class="empty-state"><p>No hay reuniones.<br>Crea una nueva.</p></div>`;
+    if (filtered.length === 0) {
+      html = `<div class="empty-state"><p>No hay reuniones${this.activeCategory ? ' en esta categoría' : ''}.<br>Crea una nueva.</p></div>`;
     }
     this.meetingListEl.innerHTML = html;
+
+    // Render category chips
+    if (hasCats) this.renderCategoryChips();
   }
 
   startRenameMeeting(meetingId) {
@@ -2337,6 +2375,9 @@ class MeetingManager {
             <button class="btn-rename-meeting" onclick="event.stopPropagation(); app.startRenameMeeting('${m.id}')" title="Renombrar reunión">
               <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
+            ${this.categories.length > 0 ? `<button class="btn-move-meeting" onclick="event.stopPropagation(); app.showMeetingContextMenu('${m.id}', event)" title="Mover a categoría">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            </button>` : ''}
           </div>
           <div class="meeting-date">${this.formatDate(m.date)}</div>
           ${followupHtml}
@@ -2391,6 +2432,155 @@ class MeetingManager {
     const [y, m, d] = ds.split('-');
     const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
     return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
+  }
+
+  // ===== CATEGORIES =====
+  getCategoriesKey() {
+    const userId = this.currentUser?.id || 'legacy';
+    return `meetflow_categories_${userId}`;
+  }
+
+  loadCategories() {
+    const data = localStorage.getItem(this.getCategoriesKey());
+    this.categories = data ? JSON.parse(data) : [];
+  }
+
+  saveCategories() {
+    localStorage.setItem(this.getCategoriesKey(), JSON.stringify(this.categories));
+  }
+
+  addCategory(name) {
+    name = name.trim();
+    if (!name || this.categories.includes(name)) return;
+    this.categories.push(name);
+    this.saveCategories();
+    this.renderMeetingList();
+    this.renderCategoryManager();
+  }
+
+  deleteCategory(name) {
+    this.categories = this.categories.filter(c => c !== name);
+    // Reset meetings in this category to uncategorized
+    this.meetings.forEach(m => { if (m.category === name) m.category = ''; });
+    this.saveCategories();
+    this.saveMeetings();
+    if (this.activeCategory === name) this.activeCategory = null;
+    this.renderMeetingList();
+    this.renderCategoryManager();
+  }
+
+  filterByCategory(cat) {
+    this.activeCategory = this.activeCategory === cat ? null : cat;
+    this.renderMeetingList();
+  }
+
+  renderCategoryChips() {
+    if (!this.categoryChips) return;
+    const allCount = this.meetings.length;
+    let html = `<button class="category-chip ${this.activeCategory === null ? 'active' : ''}" onclick="app.filterByCategory(null)">Todas (${allCount})</button>`;
+    this.categories.forEach(cat => {
+      const count = this.meetings.filter(m => (m.category || '') === cat).length;
+      const isActive = this.activeCategory === cat;
+      html += `<button class="category-chip ${isActive ? 'active' : ''}" onclick="app.filterByCategory('${this.esc(cat)}')">${this.esc(cat)} (${count})</button>`;
+    });
+    // Show uncategorized count
+    const uncatCount = this.meetings.filter(m => !m.category).length;
+    if (uncatCount > 0 && uncatCount < allCount) {
+      const isActive = this.activeCategory === '';
+      html += `<button class="category-chip ${isActive ? 'active' : ''}" onclick="app.filterByCategory('')">General (${uncatCount})</button>`;
+    }
+    this.categoryChips.innerHTML = html;
+  }
+
+  renderCategoryManager() {
+    if (!this.categoryManagerList) return;
+    if (this.categories.length === 0) {
+      this.categoryManagerList.innerHTML = '<div style="font-size:0.72rem;color:var(--text-muted);padding:4px 8px;">Aún no hay categorías</div>';
+      return;
+    }
+    this.categoryManagerList.innerHTML = this.categories.map(cat => {
+      const count = this.meetings.filter(m => (m.category || '') === cat).length;
+      return `<div class="category-list-item">
+        <span class="cat-name">${this.esc(cat)}</span>
+        <span style="display:flex;align-items:center;gap:4px;">
+          <span class="cat-count">${count}</span>
+          <button class="category-delete-btn" onclick="app.deleteCategory('${this.esc(cat)}')" title="Eliminar">✕</button>
+        </span>
+      </div>`;
+    }).join('');
+  }
+
+  showMeetingContextMenu(meetingId, event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = this.meetingContextMenu;
+    if (!menu) return;
+
+    const meeting = this.getMeeting(meetingId);
+    if (!meeting) return;
+
+    // Build menu items
+    let html = `<div class="context-menu-item ${!meeting.category ? 'active-cat' : ''}" onclick="app.moveMeetingToCategory('${meetingId}', '')">📋 General</div>`;
+    this.categories.forEach(cat => {
+      const isActive = meeting.category === cat;
+      html += `<div class="context-menu-item ${isActive ? 'active-cat' : ''}" onclick="app.moveMeetingToCategory('${meetingId}', '${this.esc(cat)}')">📁 ${this.esc(cat)}</div>`;
+    });
+
+    this.contextMenuItems.innerHTML = html;
+    menu.classList.remove('hidden');
+
+    // Position near click
+    const x = Math.min(event.clientX, window.innerWidth - 180);
+    const y = Math.min(event.clientY, window.innerHeight - 200);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    // Close on click outside
+    const close = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.classList.add('hidden');
+        document.removeEventListener('click', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close), 10);
+  }
+
+  moveMeetingToCategory(meetingId, category) {
+    const meeting = this.getMeeting(meetingId);
+    if (!meeting) return;
+    meeting.category = category;
+    this.saveMeetings();
+    this.meetingContextMenu?.classList.add('hidden');
+    this.renderMeetingList();
+    this.showToast(`Movida a: ${category || 'General'}`, 'success');
+  }
+
+  bindCategoryEvents() {
+    if (this.btnManageCategories) {
+      this.btnManageCategories.addEventListener('click', () => {
+        this.categoryManager?.classList.toggle('hidden');
+        this.renderCategoryManager();
+      });
+    }
+    if (this.btnCloseCategoryManager) {
+      this.btnCloseCategoryManager.addEventListener('click', () => {
+        this.categoryManager?.classList.add('hidden');
+      });
+    }
+    if (this.btnAddCategory) {
+      this.btnAddCategory.addEventListener('click', () => {
+        this.addCategory(this.newCategoryInput.value);
+        this.newCategoryInput.value = '';
+      });
+    }
+    if (this.newCategoryInput) {
+      this.newCategoryInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          this.addCategory(this.newCategoryInput.value);
+          this.newCategoryInput.value = '';
+        }
+      });
+    }
   }
 }
 

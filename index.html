@@ -216,6 +216,33 @@
         </div>
       </div>
 
+      <!-- Category Filter (hidden by default, appears when categories exist) -->
+      <div class="category-bar hidden" id="categoryBar">
+        <div class="category-chips" id="categoryChips"></div>
+        <button class="category-manage-btn" id="btnManageCategories" title="Gestionar categorías">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" x2="12" y1="11" y2="17"/><line x1="9" x2="15" y1="14" y2="14"/></svg>
+        </button>
+      </div>
+
+      <!-- Category Manager (hidden) -->
+      <div class="category-manager hidden" id="categoryManager">
+        <div class="category-manager-header">
+          <span>Categorías</span>
+          <button class="category-close-btn" id="btnCloseCategoryManager">✕</button>
+        </div>
+        <div class="category-form">
+          <input type="text" id="newCategoryInput" placeholder="Nueva categoría..." maxlength="30">
+          <button class="category-add-btn" id="btnAddCategory">+</button>
+        </div>
+        <div class="category-list" id="categoryManagerList"></div>
+      </div>
+
+      <!-- Context Menu for moving meetings -->
+      <div class="meeting-context-menu hidden" id="meetingContextMenu">
+        <div class="context-menu-header">Mover a:</div>
+        <div class="context-menu-items" id="contextMenuItems"></div>
+      </div>
+
       <div class="sidebar-content" id="meetingList"></div>
 
       <div class="sidebar-footer">

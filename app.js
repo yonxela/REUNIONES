@@ -35,6 +35,9 @@ class MeetingManager {
     this.masterPanel?.classList.add('hidden');
     this.appContainer.classList.remove('hidden');
 
+    // Sync users/config from cloud (non-blocking)
+    this.syncFromCloud();
+
     // Show user name in sidebar
     const nameEl = document.getElementById('sidebarUserName');
     const avatarEl = document.getElementById('sidebarUserAvatar');
@@ -431,6 +434,16 @@ class MeetingManager {
     return localStorage.getItem('meetflow_master_code') || 'mst000';
   }
 
+  async saveMasterCode(code) {
+    localStorage.setItem('meetflow_master_code', code);
+    if (window.supabaseDb) {
+      try {
+        await window.supabaseDb.from('meetflow_config')
+          .upsert([{ key: 'master_code', value: code, updatedAt: new Date().toISOString() }]);
+      } catch (e) { console.warn('Config sync error:', e.message); }
+    }
+  }
+
   getUsers() {
     return JSON.parse(localStorage.getItem('meetflow_users') || '[]');
   }
@@ -439,35 +452,87 @@ class MeetingManager {
     localStorage.setItem('meetflow_users', JSON.stringify(users));
   }
 
+  async saveUsersToCloud(users) {
+    this.saveUsers(users);
+    if (window.supabaseDb) {
+      try {
+        // Upsert each user
+        const rows = users.map(u => ({
+          id: u.id,
+          name: u.name,
+          code: u.code,
+          active: u.active !== false,
+          expiresAt: u.expiresAt || null,
+          createdAt: u.createdAt || new Date().toISOString(),
+          isLegacy: u.isLegacy || false
+        }));
+        if (rows.length > 0) {
+          await window.supabaseDb.from('meetflow_users').upsert(rows);
+        }
+      } catch (e) { console.warn('Users sync error:', e.message); }
+    }
+  }
+
+  async syncFromCloud() {
+    if (!window.supabaseDb) return;
+    try {
+      // Sync master code
+      const { data: configData } = await window.supabaseDb
+        .from('meetflow_config').select('*').eq('key', 'master_code').single();
+      if (configData && configData.value) {
+        localStorage.setItem('meetflow_master_code', configData.value);
+      }
+
+      // Sync users
+      const { data: usersData } = await window.supabaseDb
+        .from('meetflow_users').select('*').order('createdAt', { ascending: true });
+      if (usersData && usersData.length > 0) {
+        // Merge: cloud data wins, but preserve any local-only users
+        const localUsers = this.getUsers();
+        const cloudIds = new Set(usersData.map(u => u.id));
+        const localOnly = localUsers.filter(u => !cloudIds.has(u.id));
+        const merged = [...usersData, ...localOnly];
+        this.saveUsers(merged);
+        // Push local-only users to cloud
+        if (localOnly.length > 0) {
+          await this.saveUsersToCloud(merged);
+        }
+      } else {
+        // No cloud users — push local users up
+        const localUsers = this.getUsers();
+        if (localUsers.length > 0) {
+          await this.saveUsersToCloud(localUsers);
+        }
+      }
+    } catch (e) { console.warn('Cloud sync error:', e.message); }
+  }
+
   // Migrates the pre-multiuser legacy account (1122 / Yonathan Rodas) into the
   // users list so it appears in the Master Panel. Called once at app startup.
   migrateLegacyUser() {
     const users = this.getUsers();
     const alreadyMigrated = users.find(u => u.id === 'legacy');
-    if (alreadyMigrated) return; // already done
+    if (alreadyMigrated) return;
 
-    // Register Yonathan Rodas as a proper panel user
     const legacyUser = {
       id: 'legacy',
       name: 'Yonathan Rodas',
       code: '1122',
       active: true,
-      expiresAt: null, // sin expiración
+      expiresAt: null,
       createdAt: new Date().toISOString(),
-      isLegacy: true  // marker so we can display it differently if needed
+      isLegacy: true
     };
     users.push(legacyUser);
     this.saveUsers(users);
 
-    // Migrate meeting data: if old 'meetflow_meetings' has data and
-    // 'meetflow_meetings_legacy' is empty, copy it over
+    // Migrate meeting data
     const oldKey = 'meetflow_meetings';
     const newKey = 'meetflow_meetings_legacy';
     const existingNew = localStorage.getItem(newKey);
     const existingOld = localStorage.getItem(oldKey);
     if (!existingNew && existingOld) {
       localStorage.setItem(newKey, existingOld);
-      console.log('[Migration] Meeting data copied from', oldKey, 'to', newKey);
     }
   }
 
@@ -475,7 +540,7 @@ class MeetingManager {
     if (this.currentUser && !this.currentUser.isMaster) {
       return `meetflow_meetings_${this.currentUser.id}`;
     }
-    return 'meetflow_meetings'; // legacy / fallback
+    return 'meetflow_meetings';
   }
 
   checkAccess() {
@@ -589,7 +654,7 @@ class MeetingManager {
         this.showToast('El código debe tener al menos 4 caracteres', 'warning');
         return;
       }
-      localStorage.setItem('meetflow_master_code', val);
+      this.saveMasterCode(val);
       this.showToast('Código master actualizado ✓', 'success');
     });
 
@@ -814,7 +879,7 @@ class MeetingManager {
       this.showToast('Usuario creado ✓', 'success');
     }
 
-    this.saveUsers(users);
+    this.saveUsersToCloud(users);
     this.masterUserForm.classList.add('hidden');
     this.userFormId.value = '';
     this.renderMasterUsers();
@@ -839,7 +904,7 @@ class MeetingManager {
     const user = users.find(u => u.id === userId);
     if (!user) return;
     user.active = !user.active;
-    this.saveUsers(users);
+    this.saveUsersToCloud(users);
     this.renderMasterUsers();
     this.renderMasterStats();
     this.showToast(user.active ? 'Usuario activado' : 'Usuario desactivado', 'info');
@@ -851,7 +916,12 @@ class MeetingManager {
       '¿Eliminar este usuario? Sus reuniones se conservarán en local pero no podrá acceder.',
       () => {
         const users = this.getUsers().filter(u => u.id !== userId);
-        this.saveUsers(users);
+        this.saveUsersToCloud(users);
+        // Also delete from Supabase
+        if (window.supabaseDb) {
+          window.supabaseDb.from('meetflow_users').delete().eq('id', userId)
+            .then(() => {}).catch(() => {});
+        }
         this.renderMasterUsers();
         this.renderMasterStats();
         this.showToast('Usuario eliminado', 'info');

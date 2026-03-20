@@ -861,26 +861,30 @@ class MeetingManager {
 
   // ===== PERSISTENCE =====
   async loadMeetings() {
+    const key = this.getMeetingsStorageKey();
+
     if (window.supabaseDb) {
       try {
+        const userId = this.currentUser?.id || 'legacy';
         const { data, error } = await window.supabaseDb
           .from('meetflow_reuniones')
           .select('*')
+          .eq('userId', userId)
           .order('createdAt', { ascending: false });
 
         if (error) throw error;
 
         if (data && data.length > 0) {
           this.meetings = data;
-          localStorage.setItem('meetflow_meetings', JSON.stringify(this.meetings));
+          localStorage.setItem(key, JSON.stringify(this.meetings));
           this.renderMeetingList();
         }
       } catch (e) {
         console.error("Error loading meetings from Supabase:", e);
       }
     } else {
-      // Fallback
-      const data = localStorage.getItem('meetflow_meetings');
+      // Fallback — use user-specific key
+      const data = localStorage.getItem(key);
       this.meetings = data ? JSON.parse(data) : [];
       this.renderMeetingList();
     }

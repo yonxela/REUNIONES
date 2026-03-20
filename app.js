@@ -493,9 +493,10 @@ class MeetingManager {
       return;
     }
 
-    // 3. Legacy fallback (si no hay usuarios configurados)
-    if (users.length === 0 && code === '1122') {
-      this.currentUser = { id: 'legacy', name: 'Usuario', isMaster: false };
+    // 3. Legacy fallback — siempre válido para compatibilidad con usuarios anteriores
+    const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
+    if (legacyCodes.includes(code)) {
+      this.currentUser = { id: 'legacy_' + code, name: 'Usuario ' + code, isMaster: false };
       sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
       this.loginErrorMsg.style.display = 'none';
       this.loginScreen.classList.add('hidden');

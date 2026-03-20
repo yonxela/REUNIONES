@@ -301,70 +301,70 @@ class MeetingManager {
   // ===== GLOBAL SEARCH =====
   performGlobalSearch(query) {
     try {
-    const meetings = this.meetings;
-    if (!meetings || meetings.length === 0) {
-      this.showSearchResults(query, []);
-      return;
-    }
-
-    const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const results = [];
-
-    meetings.forEach(m => {
-      const meetingLabel = m.title || 'Sin título';
-      const meetingDate = this.formatDate(m.date);
-
-      // Search in meeting title
-      const titleNorm = (m.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      if (titleNorm.includes(q)) {
-        results.push({ type: 'title', meeting: m, meetingLabel, meetingDate, text: m.title || 'Sin título', detail: `Reunión del ${meetingDate}` });
+      const meetings = this.meetings;
+      if (!meetings || meetings.length === 0) {
+        this.showSearchResults(query, []);
+        return;
       }
 
-      // Search in participants
-      (m.participants || []).forEach(p => {
-        const pNorm = p.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        if (pNorm.includes(q)) {
-          results.push({ type: 'participant', meeting: m, meetingLabel, meetingDate, text: p, detail: `Participante en "${meetingLabel}"` });
+      const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const results = [];
+
+      meetings.forEach(m => {
+        const meetingLabel = m.title || 'Sin título';
+        const meetingDate = this.formatDate(m.date);
+
+        // Search in meeting title
+        const titleNorm = (m.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (titleNorm.includes(q)) {
+          results.push({ type: 'title', meeting: m, meetingLabel, meetingDate, text: m.title || 'Sin título', detail: `Reunión del ${meetingDate}` });
+        }
+
+        // Search in participants
+        (m.participants || []).forEach(p => {
+          const pNorm = p.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (pNorm.includes(q)) {
+            results.push({ type: 'participant', meeting: m, meetingLabel, meetingDate, text: p, detail: `Participante en "${meetingLabel}"` });
+          }
+        });
+
+        // Search in topics
+        (m.topics || []).forEach(t => {
+          const topicName = t.name || t.title || '';
+          const tNorm = topicName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (tNorm.includes(q)) {
+            results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: topicName, detail: `Tema en "${meetingLabel}"`, extra: t.notes || '' });
+          }
+          // Also search in topic notes
+          const notesNorm = (t.notes || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (notesNorm.includes(q) && !tNorm.includes(q)) {
+            const snippet = this.getSearchSnippet(t.notes, query, 80);
+            results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: `Nota en tema: ${topicName}`, detail: snippet });
+          }
+        });
+
+        // Search in tasks
+        (m.tasks || []).forEach(t => {
+          const taskDesc = t.description || t.text || '';
+          const descNorm = taskDesc.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          const assigneeNorm = (t.assignee || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (descNorm.includes(q) || assigneeNorm.includes(q)) {
+            results.push({ type: 'task', meeting: m, meetingLabel, meetingDate, text: taskDesc, detail: t.assignee ? `Asignado a: ${t.assignee}` : 'Sin asignar', completed: t.completed });
+          }
+        });
+
+        // Search in AI summary
+        if (m.aiSummary) {
+          const sumNorm = m.aiSummary.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (sumNorm.includes(q)) {
+            const snippet = this.getSearchSnippet(m.aiSummary, query, 120);
+            results.push({ type: 'summary', meeting: m, meetingLabel, meetingDate, text: 'Resumen IA', detail: snippet });
+          }
         }
       });
 
-      // Search in topics
-      (m.topics || []).forEach(t => {
-        const topicName = t.name || t.title || '';
-        const tNorm = topicName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        if (tNorm.includes(q)) {
-          results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: topicName, detail: `Tema en "${meetingLabel}"`, extra: t.notes || '' });
-        }
-        // Also search in topic notes
-        const notesNorm = (t.notes || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        if (notesNorm.includes(q) && !tNorm.includes(q)) {
-          const snippet = this.getSearchSnippet(t.notes, query, 80);
-          results.push({ type: 'topic', meeting: m, meetingLabel, meetingDate, text: `Nota en tema: ${topicName}`, detail: snippet });
-        }
-      });
-
-      // Search in tasks
-      (m.tasks || []).forEach(t => {
-        const taskDesc = t.description || t.text || '';
-        const descNorm = taskDesc.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const assigneeNorm = (t.assignee || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        if (descNorm.includes(q) || assigneeNorm.includes(q)) {
-          results.push({ type: 'task', meeting: m, meetingLabel, meetingDate, text: taskDesc, detail: t.assignee ? `Asignado a: ${t.assignee}` : 'Sin asignar', completed: t.completed });
-        }
-      });
-
-      // Search in AI summary
-      if (m.aiSummary) {
-        const sumNorm = m.aiSummary.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        if (sumNorm.includes(q)) {
-          const snippet = this.getSearchSnippet(m.aiSummary, query, 120);
-          results.push({ type: 'summary', meeting: m, meetingLabel, meetingDate, text: 'Resumen IA', detail: snippet });
-        }
-      }
-    });
-
-    this.showSearchResults(query, results);
-    } catch(err) {
+      this.showSearchResults(query, results);
+    } catch (err) {
       console.warn('[Search] Error:', err.message);
       this.showSearchResults(query, []);
     }
@@ -749,12 +749,12 @@ class MeetingManager {
       let timeRemainingText = '';
       let timeBarPercent = 100;
       let timeBarClass = 'time-bar-ok';
-      
+
       if (u.expiresAt) {
         const expiryDate = new Date(u.expiresAt);
         const diffMs = expiryDate - now;
         daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-        
+
         if (daysRemaining < 0) {
           timeRemainingText = `Venció hace ${Math.abs(daysRemaining)} día${Math.abs(daysRemaining) !== 1 ? 's' : ''}`;
           timeBarPercent = 0;
@@ -778,7 +778,7 @@ class MeetingManager {
         } else {
           const months = Math.floor(daysRemaining / 30);
           const remDays = daysRemaining % 30;
-          timeRemainingText = months > 0 
+          timeRemainingText = months > 0
             ? `${months} mes${months > 1 ? 'es' : ''}${remDays > 0 ? ` y ${remDays}d` : ''}`
             : `${daysRemaining} días`;
           timeBarPercent = 100;
@@ -845,9 +845,9 @@ class MeetingManager {
             </button>
             <button class="btn-master-action toggle" onclick="app.toggleMasterUser('${u.id}')" title="${u.active ? 'Desactivar' : 'Activar'}">
               ${u.active
-                ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/></svg>'
-                : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
-              }
+          ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/></svg>'
+          : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+        }
             </button>
             <button class="btn-master-action delete" onclick="app.deleteMasterUser('${u.id}')" title="Eliminar">
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
@@ -961,7 +961,7 @@ class MeetingManager {
         // Also delete from Supabase
         if (window.supabaseDb) {
           window.supabaseDb.from('meetflow_users').delete().eq('id', userId)
-            .then(() => {}).catch(() => {});
+            .then(() => { }).catch(() => { });
         }
         this.renderMasterUsers();
         this.renderMasterStats();
@@ -2158,9 +2158,9 @@ class MeetingManager {
           html += `
             <li class="summary-task-item ${t.completed ? 'done' : ''}" onclick="app.toggleTaskFromSummary('${t.id}')">
               <span class="summary-task-check">${t.completed
-                ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
-                : '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>'
-              }</span>
+              ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+              : '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>'
+            }</span>
               <span class="summary-task-name">${this.esc(t.name)}</span>
               ${meta ? `<span class="summary-task-metas">${meta}</span>` : ''}
             </li>`;

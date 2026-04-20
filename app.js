@@ -733,16 +733,19 @@ class MeetingManager {
       return;
     }
 
-    // 3. Legacy fallback
-    const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
-    if (legacyCodes.includes(code)) {
-      this.currentUser = { id: 'legacy', name: 'Yonathan Rodas', isMaster: false };
-      sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
-      this.loginErrorMsg.style.display = 'none';
-      this.loginScreen.classList.add('hidden');
-      this.loginCodeInput.value = '';
-      this.initializeApp();
-      return;
+    // 3. Legacy fallback — only if legacy user NOT in users list (pre-migration)
+    const legacyInUsers = users.find(u => u.id === 'legacy');
+    if (!legacyInUsers) {
+      const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
+      if (legacyCodes.includes(code)) {
+        this.currentUser = { id: 'legacy', name: 'Yonathan Rodas', isMaster: false };
+        sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
+        this.loginErrorMsg.style.display = 'none';
+        this.loginScreen.classList.add('hidden');
+        this.loginCodeInput.value = '';
+        this.initializeApp();
+        return;
+      }
     }
 
     this.loginErrorMsg.textContent = 'Código incorrecto. Inténtalo de nuevo.';

@@ -20,6 +20,8 @@ class MeetingManager {
     // Realtime
     this.realtime = null;
     this.isGuestMode = false;
+    // Pending tasks panel view mode
+    this.pendingTasksViewMode = 'assignee'; // 'assignee' | 'meeting'
   }
 
   async init() {
@@ -83,6 +85,9 @@ class MeetingManager {
 
     // Bind share button
     this.bindShareEvents();
+
+    // Update pending tasks badge
+    this.updatePendingTasksGlobalCount();
   }
 
   cacheDOM() {
@@ -211,6 +216,16 @@ class MeetingManager {
     this.categoryManagerList = document.getElementById('categoryManagerList');
     this.meetingContextMenu = document.getElementById('meetingContextMenu');
     this.contextMenuItems = document.getElementById('contextMenuItems');
+
+    // Pending Tasks Panel
+    this.btnPendingTasks = document.getElementById('btnPendingTasks');
+    this.pendingTasksGlobalCount = document.getElementById('pendingTasksGlobalCount');
+    this.pendingTasksPanel = document.getElementById('pendingTasksPanel');
+    this.pendingTasksTotalBadge = document.getElementById('pendingTasksTotalBadge');
+    this.pendingTasksBody = document.getElementById('pendingTasksBody');
+    this.btnClosePending = document.getElementById('btnClosePending');
+    this.btnViewByAssignee = document.getElementById('btnViewByAssignee');
+    this.btnViewByMeeting = document.getElementById('btnViewByMeeting');
   }
 
   bindEvents() {
@@ -255,6 +270,30 @@ class MeetingManager {
     this.btnAddTask.addEventListener('click', () => this.addTask());
     this.taskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.addTask(); });
 
+    // Pending Tasks Panel
+    if (this.btnPendingTasks) {
+      this.btnPendingTasks.addEventListener('click', () => this.openPendingTasksPanel());
+    }
+    if (this.btnClosePending) {
+      this.btnClosePending.addEventListener('click', () => this.closePendingTasksPanel());
+    }
+    if (this.btnViewByAssignee) {
+      this.btnViewByAssignee.addEventListener('click', () => {
+        this.pendingTasksViewMode = 'assignee';
+        this.btnViewByAssignee.classList.add('active');
+        this.btnViewByMeeting.classList.remove('active');
+        this.renderPendingTasksPanel();
+      });
+    }
+    if (this.btnViewByMeeting) {
+      this.btnViewByMeeting.addEventListener('click', () => {
+        this.pendingTasksViewMode = 'meeting';
+        this.btnViewByMeeting.classList.add('active');
+        this.btnViewByAssignee.classList.remove('active');
+        this.renderPendingTasksPanel();
+      });
+    }
+
     // Summary
     this.btnCopySummary.addEventListener('click', () => this.copySummary());
     this.btnNewAfterSummary.addEventListener('click', () => this.createNewMeeting());
@@ -296,6 +335,33 @@ class MeetingManager {
       });
       this.btnCloseSearch.addEventListener('click', () => this.closeSearchResults());
     }
+
+    // Change Password — gear button opens modal directly
+    const btnOpenPw = document.getElementById('btnOpenChangePassword');
+    if (btnOpenPw) {
+      btnOpenPw.addEventListener('click', () => this.openChangePasswordModal());
+    }
+    const btnClosePw = document.getElementById('btnClosePwModal');
+    const btnCancelPw = document.getElementById('btnCancelPwChange');
+    const changePwOverlay = document.getElementById('changePwOverlay');
+    if (btnClosePw) btnClosePw.addEventListener('click', () => this.closeChangePasswordModal());
+    if (btnCancelPw) btnCancelPw.addEventListener('click', () => this.closeChangePasswordModal());
+    if (changePwOverlay) {
+      changePwOverlay.addEventListener('click', (e) => {
+        if (e.target === changePwOverlay) this.closeChangePasswordModal();
+      });
+    }
+    const btnSavePw = document.getElementById('btnSavePwChange');
+    if (btnSavePw) btnSavePw.addEventListener('click', () => this.handleChangePassword());
+
+    // Toggle password visibility in change-password modal
+    document.querySelectorAll('.change-pw-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        const inp = document.getElementById(targetId);
+        if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
+      });
+    });
   }
 
   // ===== GLOBAL SEARCH =====
@@ -659,6 +725,100 @@ class MeetingManager {
     if (this.appContainer) this.appContainer.classList.add('hidden');
     if (this.loginScreen) this.loginScreen.classList.remove('hidden');
     this.loginCodeInput.value = '';
+  }
+
+  // ===== CHANGE PASSWORD =====
+  openChangePasswordModal() {
+    const overlay = document.getElementById('changePwOverlay');
+    const errEl = document.getElementById('changePwError');
+    if (!overlay) return;
+    // Clear fields
+    document.getElementById('pwCurrentInput').value = '';
+    document.getElementById('pwNewInput').value = '';
+    document.getElementById('pwConfirmInput').value = '';
+    // Reset to password type
+    document.getElementById('pwCurrentInput').type = 'password';
+    document.getElementById('pwNewInput').type = 'password';
+    document.getElementById('pwConfirmInput').type = 'password';
+    if (errEl) errEl.classList.add('hidden');
+    overlay.classList.remove('hidden');
+    setTimeout(() => document.getElementById('pwCurrentInput')?.focus(), 100);
+  }
+
+  closeChangePasswordModal() {
+    const overlay = document.getElementById('changePwOverlay');
+    if (overlay) overlay.classList.add('hidden');
+  }
+
+  async handleChangePassword() {
+    const currentCode = document.getElementById('pwCurrentInput')?.value.trim();
+    const newCode = document.getElementById('pwNewInput')?.value.trim();
+    const confirmCode = document.getElementById('pwConfirmInput')?.value.trim();
+    const errEl = document.getElementById('changePwError');
+
+    const showError = (msg) => {
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove('hidden');
+      }
+    };
+
+    // Validate
+    if (!currentCode) { showError('Ingresa tu contraseña actual.'); return; }
+    if (!newCode) { showError('Ingresa la nueva contraseña.'); return; }
+    if (newCode.length < 3) { showError('La nueva contraseña debe tener al menos 3 caracteres.'); return; }
+    if (newCode !== confirmCode) { showError('Las contraseñas nuevas no coinciden.'); return; }
+    if (currentCode === newCode) { showError('La nueva contraseña debe ser diferente a la actual.'); return; }
+
+    // Verify current password matches
+    if (!this.currentUser) { showError('No hay sesión activa.'); return; }
+
+    const users = this.getUsers();
+    const user = users.find(u => u.id === this.currentUser.id);
+
+    if (!user) {
+      // Could be legacy user — check legacy codes
+      const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
+      if (!legacyCodes.includes(currentCode)) {
+        showError('La contraseña actual es incorrecta.');
+        return;
+      }
+      // Check for duplicates
+      const duplicate = users.find(u => u.code === newCode);
+      if (duplicate) { showError('Ese código ya está en uso por otro usuario.'); return; }
+      if (newCode === this.getMasterCode()) { showError('No puedes usar el código master.'); return; }
+
+      // Update legacy code
+      const idx = legacyCodes.indexOf(currentCode);
+      if (idx !== -1) legacyCodes[idx] = newCode;
+      localStorage.setItem('meetflow_legacy_codes', JSON.stringify(legacyCodes));
+
+      // Also update in users list if legacy user exists there
+      const legacyUser = users.find(u => u.id === 'legacy');
+      if (legacyUser) {
+        legacyUser.code = newCode;
+        await this.saveUsersToCloud(users);
+      }
+    } else {
+      // Normal user — verify current code
+      if (user.code !== currentCode) {
+        showError('La contraseña actual es incorrecta.');
+        return;
+      }
+      // Check for duplicates
+      const duplicate = users.find(u => u.id !== user.id && u.code === newCode);
+      if (duplicate) { showError('Ese código ya está en uso por otro usuario.'); return; }
+      if (newCode === this.getMasterCode()) { showError('No puedes usar el código master.'); return; }
+
+      // Update
+      user.code = newCode;
+      await this.saveUsersToCloud(users);
+    }
+
+    // Success
+    if (errEl) errEl.classList.add('hidden');
+    this.closeChangePasswordModal();
+    this.showToast('Contraseña actualizada correctamente ✓', 'success');
   }
 
   // ===== MASTER PANEL =====
@@ -1516,6 +1676,22 @@ class MeetingManager {
         this.showToast('¡Subtema completado!', 'success');
         return;
       } else {
+        // No more subtopics after current — check if any subtopics remain uncompleted anywhere
+        const anyPending = topic.subtopics.filter(s => !s.completed);
+        if (anyPending.length > 0) {
+          // There are still pending subtopics — ask user
+          const names = anyPending.map(s => `• ${s.name}`).join('\n');
+          this.openModal(
+            'Subtemas pendientes',
+            `Aún hay ${anyPending.length} subtema${anyPending.length > 1 ? 's' : ''} sin completar:\n\n${names}\n\n¿Deseas completar el tema de todos modos?`,
+            () => {
+              topic.completed = true;
+              this.currentSubtopicIndex = -1;
+              this._advanceToNextTopic();
+            }
+          );
+          return;
+        }
         // All subtopics done → mark the parent topic done
         topic.completed = true;
         this.currentSubtopicIndex = -1;
@@ -1540,6 +1716,12 @@ class MeetingManager {
     }
 
     this.saveMeetings();
+    this._advanceToNextTopic();
+  }
+
+  _advanceToNextTopic() {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
 
     // Auto-advance to next uncompleted topic
     const nextIndex = meeting.topics.findIndex((t, i) => i > this.currentTopicIndex && !t.completed);
@@ -1560,6 +1742,7 @@ class MeetingManager {
       }
     }
 
+    this.saveMeetings();
     this.renderCurrentTopic();
     this.renderMeetingAgenda();
     this.showToast('¡Tema completado!', 'success');
@@ -1581,6 +1764,36 @@ class MeetingManager {
     }
     this.renderCurrentTopic();
     this.renderMeetingAgenda();
+  }
+
+  resumeTopic(index) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const topic = meeting.topics[index];
+    if (!topic) return;
+
+    // Un-complete the topic
+    topic.completed = false;
+    this.currentTopicIndex = index;
+
+    // Find first uncompleted subtopic if any
+    if (topic.subtopics && topic.subtopics.length > 0) {
+      const firstPending = topic.subtopics.findIndex(s => !s.completed);
+      this.currentSubtopicIndex = firstPending >= 0 ? firstPending : -1;
+      if (firstPending >= 0) {
+        this.topicTimerSeconds = topic.subtopics[firstPending].elapsed || 0;
+      } else {
+        this.topicTimerSeconds = topic.elapsed || 0;
+      }
+    } else {
+      this.currentSubtopicIndex = -1;
+      this.topicTimerSeconds = topic.elapsed || 0;
+    }
+
+    this.saveMeetings();
+    this.renderCurrentTopic();
+    this.renderMeetingAgenda();
+    this.showToast(`Tema "${topic.name}" retomado`, 'info');
   }
 
   // ===== PARTICIPANTS =====
@@ -1788,10 +2001,33 @@ class MeetingManager {
       const eSec = elapsed % 60;
       const timeStr = elapsed > 0 ? `${eMin}:${eSec.toString().padStart(2, '0')}` : '';
 
-      // Render subtopics indented
-      const subtopicsHtml = (t.subtopics && t.subtopics.length > 0 && !isDone) ? t.subtopics.map((sub, si) => {
-        const isCurrentSub = isCurrent && si === this.currentSubtopicIndex;
+      // Count pending subtopics for completed topics
+      const pendingSubCount = (t.subtopics || []).filter(s => !s.completed).length;
+      const hasPendingSubs = isDone && pendingSubCount > 0;
+
+      // Render subtopics indented (also for completed topics with status)
+      const subtopicsHtml = (t.subtopics && t.subtopics.length > 0) ? t.subtopics.map((sub, si) => {
         const isSubDone = sub.completed;
+
+        // For completed topics: show read-only status of each subtopic
+        if (isDone) {
+          const subElapsed = sub.elapsed || 0;
+          const seMin = Math.floor(subElapsed / 60);
+          const seSec = subElapsed % 60;
+          const subTimeStr = subElapsed > 0 ? `${seMin}:${seSec.toString().padStart(2, '0')}` : '';
+          const subIcon = isSubDone
+            ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+            : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+          return `
+            <div class="agenda-subtopic ${isSubDone ? 'done' : 'skipped'}">
+              <div class="agenda-subtopic-icon">${subIcon}</div>
+              <span class="agenda-subtopic-name">${this.esc(sub.name)}</span>
+              ${subTimeStr ? `<span class="agenda-item-time">${subTimeStr}</span>` : ''}
+            </div>
+          `;
+        }
+
+        const isCurrentSub = isCurrent && si === this.currentSubtopicIndex;
         let subCls = 'agenda-subtopic';
         if (isSubDone) subCls += ' done';
         else if (isCurrentSub) subCls += ' current';
@@ -1832,9 +2068,12 @@ class MeetingManager {
       ` : '';
 
       return `
-        <div class="agenda-item ${cls}" onclick="app.focusOnTopic(${i})">
+        <div class="agenda-item ${cls}${hasPendingSubs ? ' has-pending-subs' : ''}" onclick="app.focusOnTopic(${i})">
           <div class="agenda-icon">${icon}</div>
-          <span class="agenda-item-name">${this.esc(t.name)}</span>
+          <span class="agenda-item-name">
+            ${this.esc(t.name)}
+            ${hasPendingSubs ? `<span class="agenda-pending-badge">${pendingSubCount} pendiente${pendingSubCount > 1 ? 's' : ''}</span>` : ''}
+          </span>
           <span class="agenda-item-right">
             ${timeStr ? `<span class="agenda-item-time">${timeStr}</span>` : ''}
             ${!isDone ? `<button class="agenda-check-btn" onclick="event.stopPropagation(); app.markTopicDoneById(${i})" title="Marcar como listo">
@@ -1842,6 +2081,9 @@ class MeetingManager {
             </button>` : ''}
             ${!isDone ? `<button class="agenda-add-sub-btn" onclick="event.stopPropagation(); app.toggleAgendaSubRow(${i})" title="Agregar subtema">
               <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+            </button>` : ''}
+            ${isDone ? `<button class="agenda-resume-btn" onclick="event.stopPropagation(); app.resumeTopic(${i})" title="Retomar tema">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             </button>` : ''}
           </span>
         </div>
@@ -1856,6 +2098,27 @@ class MeetingManager {
     if (!meeting) return;
     const topic = meeting.topics[topicIndex];
     if (!topic || topic.completed) return;
+
+    // Check for pending subtopics — warn user before skipping
+    const pendingSubs = (topic.subtopics || []).filter(s => !s.completed);
+    if (pendingSubs.length > 0) {
+      const names = pendingSubs.map(s => `• ${s.name}`).join('\n');
+      this.openModal(
+        'Subtemas pendientes',
+        `El tema "${topic.name}" tiene ${pendingSubs.length} subtema${pendingSubs.length > 1 ? 's' : ''} sin completar:\n\n${names}\n\n¿Deseas marcarlo como completado de todos modos?`,
+        () => { this._executeMarkTopicDone(topicIndex); }
+      );
+      return;
+    }
+
+    this._executeMarkTopicDone(topicIndex);
+  }
+
+  _executeMarkTopicDone(topicIndex) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const topic = meeting.topics[topicIndex];
+    if (!topic) return;
 
     topic.completed = true;
     this.saveMeetings();
@@ -2297,6 +2560,9 @@ class MeetingManager {
 
     // Render category chips
     if (hasCats) this.renderCategoryChips();
+
+    // Update pending tasks global badge
+    this.updatePendingTasksGlobalCount();
   }
 
   startRenameMeeting(meetingId) {
@@ -2434,6 +2700,275 @@ class MeetingManager {
   }
 
   closeModal() { this.modalOverlay.classList.remove('show'); }
+
+  // ===== PENDING TASKS PANEL =====
+  getAllPendingTasks() {
+    const allTasks = [];
+    this.meetings.forEach(m => {
+      (m.tasks || []).forEach(t => {
+        if (!t.completed) {
+          allTasks.push({
+            ...t,
+            meetingId: m.id,
+            meetingTitle: m.title || 'Sin título',
+            meetingDate: m.date
+          });
+        }
+      });
+    });
+    return allTasks;
+  }
+
+  updatePendingTasksGlobalCount() {
+    const count = this.getAllPendingTasks().length;
+    if (this.pendingTasksGlobalCount) {
+      this.pendingTasksGlobalCount.textContent = count;
+      this.pendingTasksGlobalCount.classList.toggle('zero', count === 0);
+    }
+  }
+
+  openPendingTasksPanel() {
+    if (!this.pendingTasksPanel) return;
+    this.pendingTasksPanel.classList.remove('hidden');
+    this.renderPendingTasksPanel();
+  }
+
+  closePendingTasksPanel() {
+    if (!this.pendingTasksPanel) return;
+    this.pendingTasksPanel.classList.add('hidden');
+  }
+
+  renderPendingTasksPanel() {
+    const allTasks = this.getAllPendingTasks();
+    // Include completed tasks too for "just completed" feedback
+    const allTasksIncCompleted = [];
+    this.meetings.forEach(m => {
+      (m.tasks || []).forEach(t => {
+        allTasksIncCompleted.push({
+          ...t,
+          meetingId: m.id,
+          meetingTitle: m.title || 'Sin título',
+          meetingDate: m.date
+        });
+      });
+    });
+
+    if (this.pendingTasksTotalBadge) {
+      this.pendingTasksTotalBadge.textContent = allTasks.length;
+    }
+
+    if (allTasks.length === 0) {
+      this.pendingTasksBody.innerHTML = `
+        <div class="pt-empty-state">
+          <div class="pt-empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </div>
+          <h3>¡Todo al día!</h3>
+          <p>No hay tareas pendientes en ninguna reunión.<br>Sigue así 🎉</p>
+        </div>`;
+      return;
+    }
+
+    if (this.pendingTasksViewMode === 'assignee') {
+      this.renderPendingByAssignee(allTasks);
+    } else {
+      this.renderPendingByMeeting(allTasks);
+    }
+  }
+
+  renderPendingByAssignee(tasks) {
+    // Group by assignee
+    const grouped = {};
+    tasks.forEach(t => {
+      const key = t.assignee || '__unassigned__';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(t);
+    });
+
+    // Sort groups: assigned first (alphabetically), unassigned last
+    const sortedKeys = Object.keys(grouped).sort((a, b) => {
+      if (a === '__unassigned__') return 1;
+      if (b === '__unassigned__') return -1;
+      return a.localeCompare(b);
+    });
+
+    let html = '';
+    sortedKeys.forEach(key => {
+      const groupTasks = grouped[key];
+      const isUnassigned = key === '__unassigned__';
+      const name = isUnassigned ? 'Sin asignar' : key;
+      const initials = isUnassigned ? '?' : this.getInitials(name);
+
+      html += `<div class="pt-assignee-group">
+        <div class="pt-assignee-header">
+          <div class="pt-assignee-avatar ${isUnassigned ? 'unassigned' : ''}">${initials}</div>
+          <div>
+            <div class="pt-assignee-name">${this.esc(name)}</div>
+          </div>
+          <span class="pt-assignee-count">${groupTasks.length} tarea${groupTasks.length !== 1 ? 's' : ''}</span>
+        </div>`;
+
+      groupTasks.forEach(t => {
+        html += this.renderPendingTaskCard(t, true);
+      });
+
+      html += '</div>';
+    });
+
+    this.pendingTasksBody.innerHTML = html;
+  }
+
+  renderPendingByMeeting(tasks) {
+    // Group by meeting
+    const grouped = {};
+    tasks.forEach(t => {
+      if (!grouped[t.meetingId]) {
+        grouped[t.meetingId] = {
+          title: t.meetingTitle,
+          date: t.meetingDate,
+          tasks: []
+        };
+      }
+      grouped[t.meetingId].tasks.push(t);
+    });
+
+    let html = '';
+    Object.entries(grouped).forEach(([meetingId, group]) => {
+      html += `<div class="pt-meeting-group">
+        <div class="pt-meeting-header">
+          <div class="pt-meeting-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+              <line x1="16" x2="16" y1="2" y2="6"/>
+              <line x1="8" x2="8" y1="2" y2="6"/>
+              <line x1="3" x2="21" y1="10" y2="10"/>
+            </svg>
+          </div>
+          <div>
+            <div class="pt-meeting-name">${this.esc(group.title)}</div>
+            <div class="pt-meeting-date">${this.formatDate(group.date)}</div>
+          </div>
+          <span class="pt-meeting-count">${group.tasks.length} tarea${group.tasks.length !== 1 ? 's' : ''}</span>
+        </div>`;
+
+      group.tasks.forEach(t => {
+        html += this.renderPendingTaskCard(t, false);
+      });
+
+      html += '</div>';
+    });
+
+    this.pendingTasksBody.innerHTML = html;
+  }
+
+  renderPendingTaskCard(task, showMeetingLink) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let dueMeta = '';
+    let dueClass = '';
+
+    if (task.dueDate) {
+      const due = new Date(task.dueDate + 'T00:00:00');
+      const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 0) {
+        dueClass = 'overdue';
+        dueMeta = `Vencida hace ${Math.abs(diffDays)} día${Math.abs(diffDays) !== 1 ? 's' : ''}`;
+      } else if (diffDays === 0) {
+        dueClass = 'due-soon';
+        dueMeta = 'Vence hoy';
+      } else if (diffDays <= 3) {
+        dueClass = 'due-soon';
+        dueMeta = `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`;
+      } else {
+        dueMeta = this.formatDate(task.dueDate);
+      }
+    }
+
+    return `
+      <div class="pt-task-card" id="ptTask_${task.id}_${task.meetingId}">
+        <div class="pt-task-check" onclick="app.toggleTaskFromPanel('${task.id}', '${task.meetingId}')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="pt-task-info">
+          <div class="pt-task-name">${this.esc(task.name)}</div>
+          <div class="pt-task-metas">
+            ${task.assignee && this.pendingTasksViewMode === 'meeting' ? `
+              <span class="pt-task-meta">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                ${this.esc(task.assignee)}
+              </span>` : ''}
+            ${dueMeta ? `
+              <span class="pt-task-meta ${dueClass}">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                ${dueMeta}
+              </span>` : ''}
+            ${task.linkedTopic ? `
+              <span class="pt-task-meta">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                ${this.esc(task.linkedTopic)}
+              </span>` : ''}
+            ${showMeetingLink ? `
+              <span class="pt-task-meta meeting-link" onclick="app.goToTaskMeeting('${task.meetingId}')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                ${this.esc(task.meetingTitle)}
+              </span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  toggleTaskFromPanel(taskId, meetingId) {
+    const meeting = this.getMeeting(meetingId);
+    if (!meeting) return;
+    const task = meeting.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    task.completed = !task.completed;
+
+    // Add completedAt timestamp
+    if (task.completed) {
+      task.completedAt = new Date().toISOString();
+    } else {
+      delete task.completedAt;
+    }
+
+    this.saveMeetings();
+
+    // Animate the card
+    const card = document.getElementById(`ptTask_${taskId}_${meetingId}`);
+    if (card && task.completed) {
+      card.classList.add('completed');
+      const check = card.querySelector('.pt-task-check');
+      if (check) check.classList.add('checked');
+      // Re-render after brief animation
+      setTimeout(() => {
+        this.renderPendingTasksPanel();
+        this.renderMeetingList();
+        if (this.currentMeetingId === meetingId) {
+          this.renderTasks();
+          if (meeting.status === 'completed') this.renderSummary();
+        }
+      }, 400);
+    } else {
+      this.renderPendingTasksPanel();
+      this.renderMeetingList();
+      if (this.currentMeetingId === meetingId) {
+        this.renderTasks();
+        if (meeting.status === 'completed') this.renderSummary();
+      }
+    }
+
+    this.showToast(task.completed ? 'Tarea completada ✓' : 'Tarea reabierta', task.completed ? 'success' : 'info');
+  }
+
+  goToTaskMeeting(meetingId) {
+    this.closePendingTasksPanel();
+    this.selectMeeting(meetingId);
+  }
 
   // ===== TOAST =====
   showToast(message, type = 'info') {

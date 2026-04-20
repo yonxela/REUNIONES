@@ -666,9 +666,42 @@ class MeetingManager {
     return false;
   }
 
-  handleLogin() {
+  async handleLogin() {
     const code = this.loginCodeInput.value.trim();
     if (!code) return;
+
+    // Show loading state
+    this.btnLoginSubmit.disabled = true;
+    this.btnLoginSubmit.textContent = 'Verificando...';
+
+    // Sync users & master code from cloud BEFORE checking (critical for cross-device login)
+    if (window.supabaseDb) {
+      try {
+        // Fetch master code from cloud
+        const { data: configData } = await window.supabaseDb
+          .from('meetflow_config').select('*').eq('key', 'master_code').single();
+        if (configData && configData.value) {
+          localStorage.setItem('meetflow_master_code', configData.value);
+        }
+
+        // Fetch users from cloud
+        const { data: usersData } = await window.supabaseDb
+          .from('meetflow_users').select('*').order('createdAt', { ascending: true });
+        if (usersData && usersData.length > 0) {
+          const localUsers = this.getUsers();
+          const cloudIds = new Set(usersData.map(u => u.id));
+          const localOnly = localUsers.filter(u => !cloudIds.has(u.id));
+          const merged = [...usersData, ...localOnly];
+          this.saveUsers(merged);
+        }
+      } catch (e) {
+        console.warn('Pre-login cloud sync error:', e.message);
+      }
+    }
+
+    // Restore button
+    this.btnLoginSubmit.disabled = false;
+    this.btnLoginSubmit.textContent = 'Iniciar sesión';
 
     // 1. Check master code
     if (code === this.getMasterCode()) {
@@ -681,7 +714,7 @@ class MeetingManager {
       return;
     }
 
-    // 2. Check user codes
+    // 2. Check user codes (now includes cloud-synced users)
     const users = this.getUsers();
     const user = users.find(u => u.active && u.code === code);
     if (user) {
@@ -700,10 +733,9 @@ class MeetingManager {
       return;
     }
 
-    // 3. Legacy fallback — siempre válido para compatibilidad con usuarios anteriores
+    // 3. Legacy fallback
     const legacyCodes = JSON.parse(localStorage.getItem('meetflow_legacy_codes') || '["1122"]');
     if (legacyCodes.includes(code)) {
-      // Use fixed id 'legacy' to preserve existing meeting data storage key
       this.currentUser = { id: 'legacy', name: 'Yonathan Rodas', isMaster: false };
       sessionStorage.setItem('meetflow_session', JSON.stringify(this.currentUser));
       this.loginErrorMsg.style.display = 'none';

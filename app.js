@@ -2725,6 +2725,10 @@ class MeetingManager {
       this.pendingTasksGlobalCount.textContent = count;
       this.pendingTasksGlobalCount.classList.toggle('zero', count === 0);
     }
+    // Hide button entirely when no pending tasks
+    if (this.btnPendingTasks) {
+      this.btnPendingTasks.style.display = count === 0 ? 'none' : '';
+    }
   }
 
   openPendingTasksPanel() {

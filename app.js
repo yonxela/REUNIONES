@@ -1404,6 +1404,19 @@ class MeetingManager {
     // Find current topic
     if (this.currentTopicIndex < 0) {
       this.currentTopicIndex = meeting.topics.findIndex(t => !t.completed);
+      this.currentSubtopicIndex = -1;
+    }
+
+    // Initialize topic timer from stored elapsed
+    if (this.currentTopicIndex >= 0 && meeting.topics[this.currentTopicIndex]) {
+      const topic = meeting.topics[this.currentTopicIndex];
+      if (this.currentSubtopicIndex >= 0 && topic.subtopics && topic.subtopics[this.currentSubtopicIndex]) {
+        this.topicTimerSeconds = topic.subtopics[this.currentSubtopicIndex].elapsed || 0;
+      } else {
+        this.topicTimerSeconds = topic.elapsed || 0;
+      }
+    } else {
+      this.topicTimerSeconds = 0;
     }
 
     // Participants count
@@ -1584,7 +1597,13 @@ class MeetingManager {
         this.updateTopicTimerDisplay();
         const meeting = this.getMeeting(this.currentMeetingId);
         if (meeting && meeting.topics[this.currentTopicIndex]) {
-          meeting.topics[this.currentTopicIndex].elapsed = this.topicTimerSeconds;
+          const topic = meeting.topics[this.currentTopicIndex];
+          // Save elapsed to subtopic if active, otherwise to topic
+          if (this.currentSubtopicIndex >= 0 && topic.subtopics && topic.subtopics[this.currentSubtopicIndex]) {
+            topic.subtopics[this.currentSubtopicIndex].elapsed = this.topicTimerSeconds;
+          } else {
+            topic.elapsed = this.topicTimerSeconds;
+          }
         }
       }
 
@@ -1676,12 +1695,10 @@ class MeetingManager {
       this.currentTopicName.innerHTML =
         `<span class="current-topic-parent">${this.esc(topic.name)}</span>` +
         `<span class="current-subtopic-name">${this.esc(sub.name)}</span>`;
-      this.topicTimerSeconds = sub.elapsed || 0;
       // Update button text
       this.btnTopicDone.querySelector('span') && (this.btnTopicDone.querySelector('span').textContent = 'Siguiente Tema');
     } else {
       this.currentTopicName.innerHTML = this.esc(topic.name);
-      this.topicTimerSeconds = topic.elapsed || 0;
     }
 
     this.updateTopicTimerDisplay();
@@ -1789,6 +1806,9 @@ class MeetingManager {
     const topic = meeting.topics[index];
     if (!topic || topic.completed) return;
 
+    // Save elapsed time of the CURRENT topic/subtopic before switching
+    this._saveCurrentTopicElapsed();
+
     this.currentTopicIndex = index;
     this.currentSubtopicIndex = subtopicIndex;
 
@@ -1801,11 +1821,30 @@ class MeetingManager {
     this.renderMeetingAgenda();
   }
 
+  // Saves the accumulated topicTimerSeconds to the currently active topic or subtopic
+  _saveCurrentTopicElapsed() {
+    if (this.currentTopicIndex < 0) return;
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    const topic = meeting.topics[this.currentTopicIndex];
+    if (!topic) return;
+
+    if (this.currentSubtopicIndex >= 0 && topic.subtopics && topic.subtopics[this.currentSubtopicIndex]) {
+      topic.subtopics[this.currentSubtopicIndex].elapsed = this.topicTimerSeconds;
+    } else {
+      topic.elapsed = this.topicTimerSeconds;
+    }
+    this.saveMeetings();
+  }
+
   resumeTopic(index) {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
     const topic = meeting.topics[index];
     if (!topic) return;
+
+    // Save elapsed time of the CURRENT topic/subtopic before switching
+    this._saveCurrentTopicElapsed();
 
     // Un-complete the topic
     topic.completed = false;

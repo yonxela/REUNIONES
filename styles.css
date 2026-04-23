@@ -2223,6 +2223,32 @@ body::before {
   background: var(--danger-bg);
 }
 
+/* Delete button for main topics in agenda */
+.agenda-topic-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.agenda-item:hover .agenda-topic-delete {
+  opacity: 0.5;
+}
+
+.agenda-topic-delete:hover {
+  opacity: 1 !important;
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
 /* Right section of agenda item (time + add subtopic btn) */
 .agenda-item-right {
   display: flex;

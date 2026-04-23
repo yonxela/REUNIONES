@@ -2054,6 +2054,48 @@ class MeetingManager {
     this.updateStartButton();
   }
 
+  removeTopicDuringMeeting(index) {
+    const meeting = this.getMeeting(this.currentMeetingId);
+    if (!meeting) return;
+    if (meeting.topics.length <= 1) {
+      this.showToast('Debe haber al menos un tema', 'warning');
+      return;
+    }
+
+    this.openModal(
+      'Eliminar tema',
+      `¿Eliminar "${this.esc(meeting.topics[index].name)}" de la agenda?`,
+      () => {
+        // Adjust currentTopicIndex if needed
+        if (this.currentTopicIndex === index) {
+          // Active topic is being deleted — move to next or previous
+          this.currentSubtopicIndex = -1;
+          meeting.topics.splice(index, 1);
+          if (index >= meeting.topics.length) {
+            this.currentTopicIndex = meeting.topics.length - 1;
+          }
+          // Load the new current topic's timer
+          const newTopic = meeting.topics[this.currentTopicIndex];
+          if (newTopic) {
+            this.topicTimerSeconds = newTopic.elapsed || 0;
+          } else {
+            this.topicTimerSeconds = 0;
+          }
+        } else {
+          meeting.topics.splice(index, 1);
+          if (this.currentTopicIndex > index) {
+            this.currentTopicIndex--;
+          }
+        }
+
+        this.saveMeetings();
+        this.renderMeetingAgenda();
+        this.renderCurrentTopic();
+        this.showToast('Tema eliminado', 'info');
+      }
+    );
+  }
+
   renderTopicsSetup() {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
@@ -2223,6 +2265,9 @@ class MeetingManager {
             ${isDone ? `<button class="agenda-resume-btn" onclick="event.stopPropagation(); app.resumeTopic(${i})" title="Retomar tema">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             </button>` : ''}
+            <button class="agenda-topic-delete" onclick="event.stopPropagation(); app.removeTopicDuringMeeting(${i})" title="Eliminar tema">
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </span>
         </div>
         ${subtopicsHtml}

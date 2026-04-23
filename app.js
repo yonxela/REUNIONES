@@ -1184,13 +1184,50 @@ class MeetingManager {
           this.meetings = data;
           localStorage.setItem(key, JSON.stringify(this.meetings));
           this.renderMeetingList();
+        } else if (userId !== 'legacy') {
+          // No meetings found for this user — check if there are legacy meetings to migrate
+          const { data: legacyData, error: legacyError } = await window.supabaseDb
+            .from('meetflow_reuniones')
+            .select('*')
+            .eq('userId', 'legacy')
+            .order('createdAt', { ascending: false });
+
+          if (!legacyError && legacyData && legacyData.length > 0) {
+            console.log(`Migrating ${legacyData.length} legacy meetings to user ${userId}`);
+            // Re-assign legacy meetings to the current user
+            for (const meeting of legacyData) {
+              meeting.userId = userId;
+              await window.supabaseDb
+                .from('meetflow_reuniones')
+                .upsert([meeting]);
+            }
+            this.meetings = legacyData;
+            localStorage.setItem(key, JSON.stringify(this.meetings));
+            this.renderMeetingList();
+          } else {
+            // Also check localStorage for legacy meetings
+            const legacyLocal = localStorage.getItem('meetflow_meetings_legacy')
+              || localStorage.getItem('meetflow_meetings');
+            if (legacyLocal) {
+              const parsed = JSON.parse(legacyLocal);
+              if (parsed.length > 0) {
+                this.meetings = parsed;
+                localStorage.setItem(key, JSON.stringify(this.meetings));
+                this.renderMeetingList();
+              }
+            }
+          }
         }
       } catch (e) {
         console.error("Error loading meetings from Supabase:", e);
       }
     } else {
-      // Fallback — use user-specific key
-      const data = localStorage.getItem(key);
+      // Fallback — use user-specific key, also check legacy keys
+      let data = localStorage.getItem(key);
+      if (!data || JSON.parse(data).length === 0) {
+        data = localStorage.getItem('meetflow_meetings_legacy')
+          || localStorage.getItem('meetflow_meetings');
+      }
       this.meetings = data ? JSON.parse(data) : [];
       this.renderMeetingList();
     }

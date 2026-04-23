@@ -597,10 +597,12 @@ class MeetingManager {
         // Merge: cloud data wins, but preserve any local-only users
         const localUsers = this.getUsers();
         const cloudIds = new Set(usersData.map(u => u.id));
-        const localOnly = localUsers.filter(u => !cloudIds.has(u.id));
+        const cloudCodes = new Set(usersData.map(u => u.code));
+        // Only keep local users whose ID AND code are not already in the cloud
+        const localOnly = localUsers.filter(u => !cloudIds.has(u.id) && !cloudCodes.has(u.code));
         const merged = [...usersData, ...localOnly];
         this.saveUsers(merged);
-        // Push local-only users to cloud
+        // Push local-only users to cloud (only truly new ones)
         if (localOnly.length > 0) {
           await this.saveUsersToCloud(merged);
         }
@@ -690,7 +692,8 @@ class MeetingManager {
         if (usersData && usersData.length > 0) {
           const localUsers = this.getUsers();
           const cloudIds = new Set(usersData.map(u => u.id));
-          const localOnly = localUsers.filter(u => !cloudIds.has(u.id));
+          const cloudCodes = new Set(usersData.map(u => u.code));
+          const localOnly = localUsers.filter(u => !cloudIds.has(u.id) && !cloudCodes.has(u.code));
           const merged = [...usersData, ...localOnly];
           this.saveUsers(merged);
         }
@@ -1243,7 +1246,7 @@ class MeetingManager {
         try {
           const { error } = await window.supabaseDb
             .from('meetflow_reuniones')
-            .upsert([{ ...activeMeeting, userId: this.currentUser?.id }]);
+            .upsert([{ ...activeMeeting, userId: activeMeeting.userId || this.currentUser?.id }]);
           if (error) throw error;
         } catch (e) {
           console.error('Error saving meeting to Supabase:', e);
@@ -1319,7 +1322,8 @@ class MeetingManager {
       totalTime: 0,
       followupDate: '',
       followupTime: '',
-      createdAt: now.toISOString()
+      createdAt: now.toISOString(),
+      userId: this.currentUser?.id || 'legacy'
     };
 
     this.meetings.unshift(meeting);

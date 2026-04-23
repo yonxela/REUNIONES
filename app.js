@@ -2016,9 +2016,29 @@ class MeetingManager {
   removeSubtopic(topicIndex, subIndex) {
     const meeting = this.getMeeting(this.currentMeetingId);
     if (!meeting) return;
-    meeting.topics[topicIndex].subtopics.splice(subIndex, 1);
+    const topic = meeting.topics[topicIndex];
+    if (!topic || !topic.subtopics) return;
+
+    // If removing the currently active subtopic, adjust index
+    if (this.currentTopicIndex === topicIndex) {
+      if (this.currentSubtopicIndex === subIndex) {
+        // Active subtopic is being deleted — move to parent or next
+        this.currentSubtopicIndex = -1;
+        this.topicTimerSeconds = topic.elapsed || 0;
+      } else if (this.currentSubtopicIndex > subIndex) {
+        // Shift index down since an earlier subtopic was removed
+        this.currentSubtopicIndex--;
+      }
+    }
+
+    topic.subtopics.splice(subIndex, 1);
     this.saveMeetings();
     this.renderTopicsSetup();
+    // Also re-render the meeting agenda if in active meeting
+    if (meeting.status === 'active') {
+      this.renderMeetingAgenda();
+      this.renderCurrentTopic();
+    }
   }
 
   removeTopic(index) {
@@ -2159,6 +2179,9 @@ class MeetingManager {
             <div class="agenda-subtopic-icon">${subIcon}</div>
             <span class="agenda-subtopic-name">${this.esc(sub.name)}</span>
             ${subTimeStr ? `<span class="agenda-item-time">${subTimeStr}</span>` : ''}
+            <button class="agenda-subtopic-delete" onclick="event.stopPropagation(); app.removeSubtopic(${i}, ${si})" title="Eliminar subtema">
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
         `;
       }).join('') : '';

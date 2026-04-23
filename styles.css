@@ -2196,6 +2196,33 @@ body::before {
 
 .agenda-subtopic-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Delete button for subtopics in agenda */
+.agenda-subtopic-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.agenda-subtopic:hover .agenda-subtopic-delete {
+  opacity: 0.6;
+}
+
+.agenda-subtopic-delete:hover {
+  opacity: 1 !important;
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
 /* Right section of agenda item (time + add subtopic btn) */
 .agenda-item-right {
   display: flex;
